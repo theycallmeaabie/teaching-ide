@@ -1,0 +1,9 @@
+*.tsbuildinfo
+.artifacts/
+.env
+.venv/
+__pycache__/
+dist/
+node_modules/
+public/pyodide/
+server/.cache/
