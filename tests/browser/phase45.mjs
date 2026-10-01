@@ -131,12 +131,45 @@ s = await store()
 check('success is confirmed, not passed over', s.speech?.kind === 'success', s.speech?.text?.slice(0, 60))
 check('...and it asks why it worked', !!s.speech?.followup, String(s.speech?.followup))
 
-// ------------------------------------------- the lesson survives a dead backend
+// --------------------------------- the server gets the last word on the tool
+// The bubble opens on the streamed tool name so the reveal can start early, but
+// leakguard can reject that choice and the server substitutes the pre-written
+// rung. The widget must follow the server, not the model it overruled.
 await goTo('sum-them')
 await sleep(600)
 await page.setRequestInterception(true)
-page.on('request', (r) => { if (r.url().includes('/api/teach')) r.abort(); else r.continue() })
-await page.evaluate(() => window.__store.getState().set({ tier: 3 }))
+// 'pass' forwards, 'override' serves a crafted stream, 'dead' kills the API.
+let teachMode = 'override'
+const OVERRIDE_SSE =
+  'event: tool\ndata: {"tool": "translate_error"}\n\n' +
+  'event: delta\ndata: {"text": "A variable created inside the loop is created again on every pass."}\n\n' +
+  'event: done\ndata: {"tool": "give_hint", "args": {"tier": 4, "text": "A variable created inside the loop is created again on every pass."}, "source": "prewritten", "note": "tier 4 translate_error gave away the answer", "doc_version": 1}\n\n'
+page.on('request', (r) => {
+  if (!r.url().includes('/api/teach')) return r.continue()
+  if (teachMode === 'dead') return r.abort()
+  if (teachMode === 'override') {
+    return r.respond({ status: 200, contentType: 'text/event-stream', body: OVERRIDE_SSE })
+  }
+  return r.continue()
+})
+
+// Tier 4 is the first rung with a worked example, so it is the one that proves
+// the scratch pane survives the override too.
+await page.evaluate(() => window.__store.getState().set({ tier: 4 }))
+await page.evaluate(() => window.__bridge.requestTeaching('gate'))
+await waitQuiet(20000); await sleep(800)
+s = await store()
+check('a tool the server overruled is re-labelled, not left as the model sent it',
+  s.speech?.kind === 'hint', `kind=${s.speech?.kind}`)
+check('...and carries the rung it was actually given', s.speech?.tier === 4, `tier=${s.speech?.tier}`)
+check('...and still gets its worked example', !!s.speech?.scratch, String(!!s.speech?.scratch))
+check('...and the scratch pane renders with it', !!(await page.$('.scratch-pane')))
+check('the override reason reaches the dev panel',
+  /gave away the answer/.test((await store()).lastSilence ?? ''), (await store()).lastSilence)
+
+// ------------------------------------------- the lesson survives a dead backend
+teachMode = 'dead'
+await page.evaluate(() => window.__store.getState().set({ tier: 3, speech: null }))
 await page.evaluate(() => window.__bridge.requestTeaching('gate'))
 await waitQuiet(20000); await sleep(600)
 s = await store()

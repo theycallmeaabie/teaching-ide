@@ -140,7 +140,22 @@ export async function requestTeaching(
   revealDone = false
 
   const open = (kind: SpeechKind, tierValue: number | null) => {
-    if (opened) return
+    const scratch =
+      kind === 'hint' && tierValue != null ? exercise.hints[tierValue - 1]?.scratch : undefined
+
+    // The bubble opens on the streamed tool name so the reveal can start
+    // before the call finishes, but the server gets the last word: a leaked
+    // answer is rejected and replaced by the pre-written rung, and the tool
+    // name changes with it. Re-key rather than return, or a hint ends up
+    // labelled "what that error means" with no tier and no worked example.
+    if (opened) {
+      const prev = useStore.getState().speech
+      if (prev && prev.id === id && (prev.kind !== kind || prev.tier !== tierValue)) {
+        useStore.getState().set({ speech: { ...prev, kind, tier: tierValue, scratch } })
+      }
+      return
+    }
+
     opened = true
     const speech: Speech = {
       id,
@@ -148,7 +163,7 @@ export async function requestTeaching(
       tier: tierValue,
       text: '',
       targetLine: null,
-      scratch: kind === 'hint' && tierValue != null ? exercise.hints[tierValue - 1]?.scratch : undefined,
+      scratch,
       source: 'llm',
       streaming: true,
     }
