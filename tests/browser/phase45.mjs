@@ -26,9 +26,12 @@ const runAndWait = async (src) => {
 }
 const waitSpeech = (ms = 30000) => page.waitForFunction(() => !!window.__store.getState().speech, { timeout: ms })
 const waitQuiet = (ms = 30000) => page.waitForFunction(() => !window.__store.getState().teacherBusy, { timeout: ms })
+// Exercises are addressed by id, never by position — the ramp is allowed to grow.
+const idx = (id) => page.evaluate(async (id) => (await import('/src/lesson/exercises.ts')).indexOfExercise(id), id)
+const goTo = async (id) => { await page.evaluate((i) => window.__teaching.goToExercise(i), await idx(id)); await sleep(400) }
 
 // ------------------------------------------------- error dictionary (no LLM)
-await page.evaluate(() => window.__teaching.goToExercise(0))
+await goTo('print-each')
 await sleep(500)
 await runAndWait('nums = [3, 7, 12, 5]\nfor n in nums:\nprint(n)\n')
 await page.waitForFunction(() => !!window.__store.getState().errorPlain, { timeout: 15000 })
@@ -38,7 +41,7 @@ check('error translated by the dictionary, no model call',
 check('plain-English reading is shown in the output pane', !!(await page.$('.err-plain')))
 
 // ------------------------------------------------------ the teacher speaks
-await page.evaluate(() => window.__teaching.goToExercise(2))
+await goTo('sum-them')
 await sleep(600)
 await runAndWait('nums = [3, 7, 12, 5]\nfor n in nums:\n    total = 0\n    total = total + n\nprint(total)\n')
 // The teacher is required to stay silent within 10s of a keystroke, so a
@@ -120,7 +123,7 @@ check('staleness: a large edit discards', stale.bigEdit === true)
 check('staleness: a new line discards', stale.lineAdded === true)
 
 // ------------------------------------------------------------ success path
-await page.evaluate(() => window.__teaching.goToExercise(0))
+await goTo('print-each')
 await sleep(600)
 await runAndWait('nums = [3, 7, 12, 5]\nfor n in nums:\n    print(n)\n')
 await waitQuiet(40000); await sleep(1200)
@@ -129,7 +132,7 @@ check('success is confirmed, not passed over', s.speech?.kind === 'success', s.s
 check('...and it asks why it worked', !!s.speech?.followup, String(s.speech?.followup))
 
 // ------------------------------------------- the lesson survives a dead backend
-await page.evaluate(() => window.__teaching.goToExercise(2))
+await goTo('sum-them')
 await sleep(600)
 await page.setRequestInterception(true)
 page.on('request', (r) => { if (r.url().includes('/api/teach')) r.abort(); else r.continue() })

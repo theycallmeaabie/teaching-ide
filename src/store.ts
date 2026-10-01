@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import type { Misconception, RunResult, RunnerStatus } from './types'
 import { EXERCISES } from './lesson/exercises'
 import type { TeacherHealth } from './teacher/health'
+import type { AuthUser } from './auth/supabase'
 
 export type SpeechKind = 'hint' | 'question' | 'error' | 'success'
 
@@ -44,6 +45,15 @@ type AppState = {
   lastSilence: string | null
   health: TeacherHealth | null
 
+  /** Null when signed out, or when Supabase is not configured at all. */
+  user: AuthUser | null
+  /** False until the first auth check settles, so the UI does not flash a
+   *  sign-in form at someone who is already signed in. */
+  authReady: boolean
+  /** Saved progress has been read back. Until then, do not write it out —
+   *  an empty store would overwrite real rows with blanks. */
+  progressLoaded: boolean
+
   setRunnerStatus: (s: RunnerStatus) => void
   setLastResult: (r: RunResult | null) => void
   setSlowRun: (v: boolean) => void
@@ -68,6 +78,10 @@ export const useStore = create<AppState>((set) => ({
   teacherBusy: false,
   lastSilence: null,
   health: null,
+
+  user: null,
+  authReady: false,
+  progressLoaded: false,
 
   setRunnerStatus: (runnerStatus) => set({ runnerStatus }),
   setLastResult: (lastResult) => set({ lastResult }),

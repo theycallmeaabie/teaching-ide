@@ -21,9 +21,12 @@ can distinguish "stuck" from "thinking" well enough that a teacher speaking on
 that signal feels helpful rather than intrusive.* Everything in the codebase
 either tests that claim or keeps the lesson running while it is tested.
 
-The lesson content is deliberately tiny — four exercises on one idea, `for`
-over a list building up to an accumulator — so that the observer, not the
-curriculum, is what gets evaluated.
+The lesson content is a twenty-exercise basics ramp — printing, variables,
+arithmetic, strings, conditionals, lists, then `for` over a list building up to
+an accumulator, and finally dictionaries and one function. It stays deliberately
+narrow so that the observer, not the curriculum, is what gets evaluated; the
+four loop exercises in the middle are still where the interesting failure modes
+live, and the seven misconception detectors only fire there.
 
 ---
 

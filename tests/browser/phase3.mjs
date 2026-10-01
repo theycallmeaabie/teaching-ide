@@ -25,28 +25,37 @@ const runAndWait = async (src) => {
   await sleep(500)
 }
 const text = (sel) => page.$eval(sel, n => n.innerText.trim()).catch(() => null)
+// Exercises are addressed by id, never by position — the ramp is allowed to grow.
+const idx = (id) => page.evaluate(async (id) => (await import('/src/lesson/exercises.ts')).indexOfExercise(id), id)
+const goTo = async (id) => { await page.evaluate((i) => window.__teaching.goToExercise(i), await idx(id)); await sleep(600) }
+const I_PRINT_EACH = await idx('print-each')
+const I_SUM = await idx('sum-them')
+const I_COUNT = await idx('count-above-ten')
 
 // ------------------------------------------------------------ content loaded
-check('starter buffer is pre-seeded with the list',
-  (await page.evaluate(() => window.__editorView.state.doc.toString())).startsWith('nums = [3, 7, 12, 5]'))
-check('exercise prompt is shown', (await text('.lesson-prompt'))?.includes('Print each number'))
-check('four exercises', (await page.$$('.dot')).length === 4)
+check('the ramp opens on the first exercise',
+  (await page.evaluate(() => window.__editorView.state.doc.toString())).startsWith('# Print the greeting'))
+check('exercise prompt is shown', (await text('.lesson-prompt'))?.includes('Hello, world!'))
+check('twenty exercises', (await page.$$('.dot')).length === 20, `${(await page.$$('.dot')).length} dots`)
+check('the loops section is still in the ramp', I_PRINT_EACH > 0 && I_SUM > I_PRINT_EACH)
 
 // ------------------------------------------------------------ success detection
+await goTo('print-each')
+check('loop exercise is pre-seeded with the list',
+  (await page.evaluate(() => window.__editorView.state.doc.toString())).startsWith('nums = [3, 7, 12, 5]'))
 await runAndWait('nums = [3, 7, 12, 5]\nfor n in nums:\n    print(n)\n')
 let s = await store()
-check('correct solution marks the exercise solved', s.solved[0] === true)
+check('correct solution marks the exercise solved', s.solved[I_PRINT_EACH] === true)
 check('solved banner appears', !!(await page.$('.solved-banner')))
 
 // ------------------------------- the case that runs clean and is still wrong
-await page.evaluate(() => window.__teaching.goToExercise(2))
-await sleep(600)
+await goTo('sum-them')
 check('exercise 3 loaded with its own starter',
   (await page.evaluate(() => window.__editorView.state.doc.toString())).includes('for n in nums'))
 await runAndWait('nums = [3, 7, 12, 5]\nfor n in nums:\n    total = 0\n    total = total + n\nprint(total)\n')
 s = await store()
 check('clean run with wrong output still counts as a failed attempt', s.attempts === 1, `attempts=${s.attempts}`)
-check('not marked solved', s.solved[2] === false)
+check('not marked solved', s.solved[I_SUM] === false)
 check('accumulator-inside-loop detected from the AST',
   s.misconceptions.some(m => m.id === 'accumulator-init-inside-loop'),
   JSON.stringify(s.misconceptions))
@@ -84,20 +93,18 @@ check('learner buffer never written to by the teacher',
   bufBefore === await page.evaluate(() => window.__editorView.state.doc.toString()))
 
 // ------------------------------------------------------------ tier resets
-await page.evaluate(() => window.__teaching.goToExercise(3))
-await sleep(500)
+await goTo('count-above-ten')
 s = await store()
-check('new exercise resets tier and attempts', s.tier === 1 && s.attempts === 0 && s.speech === null)
+check('an exercise not yet visited starts at tier 1', s.tier === 1 && s.attempts === 0 && s.speech === null)
 check('exercise 4 uses a longer list so the count cannot be guessed',
   (await page.evaluate(() => window.__editorView.state.doc.toString())).includes('18, 9, 21'))
 
 await runAndWait('nums = [3, 7, 12, 5, 18, 9, 21, 4]\ncount = 0\nfor n in nums:\n    if n > 10:\n        count = count + 1\nprint(count)\n')
 s = await store()
-check('exercise 4 solution accepted', s.solved[3] === true)
+check('exercise 4 solution accepted', s.solved[I_COUNT] === true)
 
 // -------------------------------------------------------- dev panel shows tier
-await page.evaluate(() => window.__teaching.goToExercise(2))
-await sleep(600)
+await goTo('sum-them')
 await runAndWait('nums = [3, 7, 12, 5]\nprint(oops)\n')
 await page.evaluate(() => window.__bridge.deliverPrewrittenHint('test'))
 await sleep(500)
@@ -106,7 +113,8 @@ const tierCell = await page.evaluate(() => {
   const i = ks.findIndex(n => n.textContent === 'hint tier')
   return ks[i]?.nextElementSibling?.textContent
 })
-check('dev panel reports the current hint tier', tierCell === '1', String(tierCell))
+check('dev panel reports the current hint tier', tierCell === String((await store()).tier), String(tierCell))
+check('returning to an exercise restores the rung it was left on', (await store()).tier === 5, String((await store()).tier))
 
 check('no uncaught page errors', errors.length === 0, errors.join(' | ').slice(0, 200))
 await b.close()

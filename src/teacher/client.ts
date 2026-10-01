@@ -1,4 +1,5 @@
 import type { Misconception, RunResult } from '../types'
+import { accessToken } from '../auth/supabase'
 
 export type TeacherTool =
   | 'give_hint'
@@ -58,11 +59,18 @@ export async function askTeacher(
   handlers: Handlers = {},
   signal?: AbortSignal,
 ): Promise<TeacherDecision | null> {
+  // Sent when signed in; the server treats its absence as an anonymous call
+  // rather than a refusal, so the lesson works either way.
+  const token = await accessToken()
+
   let res: Response
   try {
     res = await fetch('/api/teach', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
       body: JSON.stringify(body),
       signal,
     })

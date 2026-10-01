@@ -17,6 +17,7 @@ const SUITES = [
   { name: 'ast', kind: 'unit', file: 'tests/ast.test.mjs', what: 'cosmetic / rename / changed / unparseable' },
   { name: 'diagnose', kind: 'unit', file: 'tests/diagnose.test.mjs', what: 'misconception detectors' },
   { name: 'observer', kind: 'unit', file: 'tests/observer.test.ts', what: 'stuck score + gate scenarios' },
+  { name: 'auth', kind: 'unit', file: 'tests/auth.test.py', what: 'who a caller is: anonymous, valid, rejected' },
   { name: 'phase1', kind: 'browser', file: 'tests/browser/phase1.mjs', what: 'editor + execution' },
   { name: 'phase2', kind: 'browser', file: 'tests/browser/phase2.mjs', what: 'observer, live' },
   { name: 'phase3', kind: 'browser', file: 'tests/browser/phase3.mjs', what: 'lesson content + ladder' },
@@ -45,7 +46,10 @@ for (const s of chosen) {
   }
   console.log(`\n${'─'.repeat(64)}\n${s.name}  — ${s.what}\n${'─'.repeat(64)}`)
   try {
-    if (s.file.endsWith('.ts')) {
+    if (s.file.endsWith('.py')) {
+      // The venv is where the server's own dependencies live.
+      execFileSync('.venv/bin/python', [s.file], { stdio: 'inherit', env: { ...process.env, PYTHONPATH: '.' } })
+    } else if (s.file.endsWith('.ts')) {
       const out = new URL('../.artifacts/observer.test.mjs', import.meta.url).pathname
       execFileSync('npx', ['esbuild', s.file, '--bundle', '--platform=node', '--format=esm', `--outfile=${out}`, '--log-level=warning'], { stdio: 'inherit' })
       execFileSync('node', [out], { stdio: 'inherit', env: { ...process.env, CHROME } })

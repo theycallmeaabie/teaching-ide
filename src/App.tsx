@@ -7,12 +7,14 @@ import { DevPanel } from './ui/DevPanel'
 import { LessonBar } from './ui/LessonBar'
 import { ScratchPane } from './ui/ScratchPane'
 import { AskBox } from './ui/AskBox'
+import { AuthBar } from './ui/AuthBar'
 import { runner, SLOW_RUN_MS } from './exec/runner'
 import * as observer from './observer/observer'
 import { EXERCISES } from './lesson/exercises'
 import { submitRun } from './lesson/teaching'
 import { dismissSpeech, requestTeaching } from './teacher/bridge'
 import { fetchHealth } from './teacher/health'
+import { initAuth } from './auth/session'
 import { useStore } from './store'
 
 export default function App() {
@@ -35,6 +37,10 @@ export default function App() {
   useEffect(() => {
     void fetchHealth().then((h) => useStore.getState().set({ health: h }))
   }, [])
+
+  // Settles immediately into signed-out when Supabase is unconfigured, so the
+  // lesson never waits on it.
+  useEffect(() => initAuth(), [])
 
   useEffect(() => {
     observer.setStarter(EXERCISES[0].starter)
@@ -92,6 +98,7 @@ export default function App() {
       <header className="topbar">
         <div className="brand">Teaching IDE</div>
         <div className="topbar-actions">
+          <AuthBar />
           <button className="btn btn-ghost small" onClick={() => setDevOpen((v) => !v)}>
             {devOpen ? 'Hide observer' : 'Observer'}
           </button>

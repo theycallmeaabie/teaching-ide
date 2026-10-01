@@ -204,9 +204,10 @@ pre.err { color: var(--danger); }
 }
 
 .lesson-nav { display: flex; align-items: center; gap: 8px; flex: none; }
-.dots { display: flex; gap: 5px; margin-right: 4px; }
+/* Twenty of these now, so they are smaller and allowed to wrap. */
+.dots { display: flex; gap: 4px; margin-right: 4px; flex-wrap: wrap; max-width: 268px; }
 .dot {
-  width: 10px; height: 10px; border-radius: 50%; padding: 0; cursor: pointer;
+  width: 9px; height: 9px; border-radius: 50%; padding: 0; cursor: pointer;
   border: 1px solid var(--border); background: var(--bg);
 }
 .dot.done { background: var(--accent); border-color: var(--accent); }
@@ -329,3 +330,18 @@ pre.err { color: var(--danger); }
   background: var(--amber-bg); color: #7a5b12; border: 1px solid #e4cf94;
   cursor: help;
 }
+
+/* Sign-in sits in the topbar and never blocks the lesson: the editor, the
+   observer and the hint ladder all work signed out. */
+.authbar { display: flex; align-items: center; gap: 6px; }
+.auth-who {
+  font-size: 11px; color: var(--muted); max-width: 150px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.auth-form { display: flex; align-items: center; gap: 4px; }
+.auth-form input {
+  font: inherit; font-size: 11px; padding: 4px 7px; width: 118px;
+  border: 1px solid var(--line); border-radius: 5px; background: #fff;
+}
+.auth-form input:focus { outline: none; border-color: var(--accent); }
+.auth-msg { font-size: 11px; color: var(--danger); max-width: 240px; }

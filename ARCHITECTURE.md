@@ -78,7 +78,7 @@ src/
     annotations.ts        CodeMirror annotation marking app-driven edits
     types.ts              Event union, Contribution, SemanticVerdict
   lesson/               content and progression
-    exercises.ts          4 exercises × 5 hint tiers; isCorrect()
+    exercises.ts          20 exercises × 5 hint tiers; isCorrect(); indexOfExercise()
     teaching.ts           submitRun, askTeacherQuestion, goToExercise
   teacher/              talking to the server
     bridge.ts             requestTeaching: assemble context, stream, apply, fall back
@@ -270,7 +270,10 @@ Exercise {
 }
 ```
 
-Four exercises, all on one concept: `for` over a list → accumulator. Tiers 4
+Twenty exercises in a basics ramp — output, variables, arithmetic, strings,
+conditionals, lists, `for` over a list → accumulator, dictionaries, functions.
+A detector firing outside an exercise's `watch` list is filtered out rather than
+reported: `no-loop` is true of every exercise before the loops section. Tiers 4
 and 5 carry a `scratch` program — a worked example of the *same shape on a
 different problem* — shown read-only in a third pane.
 

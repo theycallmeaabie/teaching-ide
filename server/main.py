@@ -9,17 +9,38 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from typing import Any, AsyncIterator
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
-from . import cache, errors, leakguard, llm
+from . import auth, cache, errors, leakguard, llm
 from .models import RunErrorIn, TeachRequest
 from .prompts import SYSTEM, build_context
 from .tools import TOOLS, TOOL_NAMES
 
 app = FastAPI(title="Teaching IDE")
+
+# In development Vite proxies /api, so same-origin and this never comes up. It
+# matters the moment a built bundle is served from anywhere else: without it
+# every call fails in the browser with no useful error.
+ALLOWED_ORIGINS = [
+    o.strip()
+    for o in os.environ.get(
+        "ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173"
+    ).split(",")
+    if o.strip()
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
+)
 
 REQUIRED_ARGS = {
     "give_hint": ["tier", "text"],
@@ -106,7 +127,14 @@ async def replay(payload: dict[str, Any]) -> AsyncIterator[str]:
 
 
 @app.post("/api/teach")
-async def teach(req: TeachRequest) -> StreamingResponse:
+async def teach(
+    req: TeachRequest,
+    user_id: str | None = Depends(auth.current_user),
+) -> StreamingResponse:
+    # Identity is observed, not required: an anonymous call is served exactly as
+    # before. It is here so the budget can be enforced server-side later —
+    # today the 8-interruption limit is client-side only.
+    _ = user_id
     system = SYSTEM
     context = build_context(req)
     ck = cache.key(llm.MODEL, system, context)
