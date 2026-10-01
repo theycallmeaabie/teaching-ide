@@ -49,6 +49,18 @@ survives a refresh, and automatic session recording — the observer's event log
 written to the `sessions` table every 20 seconds instead of depending on
 someone clicking **Export log**.
 
+Prove it actually works before trusting it with a session:
+
+```bash
+npm run verify-supabase -- you@example.com 'your-password'
+```
+
+That round-trips a row through both tables, checks the `updated_at` trigger
+fires, confirms row-level security hides your rows from a signed-out reader,
+and — if the API is up — that it accepts a real token and rejects a forged one.
+Those session rows are the evidence the whole premise is judged on, so "it
+compiled" is not proof they are being written.
+
 **Leave those blank and nothing changes.** No sign-in appears, progress lives in
 memory as before, and the API serves every call anonymously. Both tables are
 row-level secured: a learner can only ever read or write their own rows.

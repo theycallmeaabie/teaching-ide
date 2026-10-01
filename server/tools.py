@@ -6,9 +6,16 @@ saying something is what it has been asked to do.
 
 Deliberately flat and free of union types. An earlier version used
 `["integer", "null"]` for the optional line numbers and produced malformed JSON
-on ~7% of calls; optional-and-omitted generates far more reliably than
-explicitly-null. Nothing nests, and nothing is required that the model could
-reasonably want to leave out.
+on ~7% of calls.
+
+Leaving them optional did not fix it either: the model reaches for `null` to
+say "no particular line" whichever way the schema is written, and the provider
+then rejects the whole call with `expected integer, but got null`. Measured at
+22% of calls on openai/gpt-oss-120b. So the line numbers are now *required*
+integers with 0 meaning "no single line" — the model always has something
+legal to emit, and null is unreachable. The client reads anything below 1 as
+no line. Nothing nests, and nothing is required that the model could not
+answer.
 """
 
 TOOLS = [
@@ -34,10 +41,13 @@ TOOLS = [
                     },
                     "target_line": {
                         "type": "integer",
-                        "description": "1-based line in the learner's buffer. Omit if none applies.",
+                        "description": (
+                            "1-based line in the learner's buffer that the hint is "
+                            "about, or 0 if it is not about one particular line."
+                        ),
                     },
                 },
-                "required": ["tier", "text"],
+                "required": ["tier", "text", "target_line"],
             },
         },
     },
@@ -70,9 +80,12 @@ TOOLS = [
                 "type": "object",
                 "properties": {
                     "plain_english": {"type": "string", "description": "One or two sentences."},
-                    "target_line": {"type": "integer", "description": "Omit if none applies."},
+                    "target_line": {
+                        "type": "integer",
+                        "description": "1-based line, or 0 if no single line applies.",
+                    },
                 },
-                "required": ["plain_english"],
+                "required": ["plain_english", "target_line"],
             },
         },
     },

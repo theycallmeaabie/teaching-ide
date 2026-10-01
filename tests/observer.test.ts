@@ -27,6 +27,7 @@ function score(over: Partial<ScoreInput> & { now: number; events: Event[] }) {
     learnerChars: over.learnerChars ?? 200,
     cosmeticStreak: over.cosmeticStreak ?? 0,
     revertedAt: over.revertedAt ?? null,
+    started: over.started ?? null,
   }
   return computeScore({ ...base, ...over })
 }
@@ -98,6 +99,40 @@ console.log('\n--- Empty-buffer silence ----------------------------------------
   const at = (dt: number) => score({ now: T0 + dt, events, lastActivityAt: T0, learnerChars: 0 })
   check('20s of nothing is not yet stuck', at(s(20)).score < 0.3, at(s(20)).score.toFixed(2))
   check('~75s of an empty buffer crosses', at(s(75)).score > 0.6, at(s(75)).score.toFixed(2))
+}
+
+console.log('\n--- "Empty" is structural, not a character count -----------------')
+{
+  // The short end of the ramp: `print(a + b)` is a complete, correct answer to
+  // "Add two numbers" and twelve characters long. Counting characters alone
+  // would call that an empty buffer and push toward 0.65 while the learner sits
+  // on a working program — the exact interruption this project exists to avoid.
+  const events = [edit(T0, [4], 12)]
+  const tiny = { now: T0 + s(90), events, lastEditAt: T0, lastActivityAt: T0, learnerChars: 12 }
+
+  const written = score({ ...tiny, started: true })
+  check('a short but real program is not an empty buffer',
+    !written.contributions.some((c) => c.key === 'emptySilence'))
+  check('...and 90s of staring at it does not cross', written.score < 0.6, written.score.toFixed(2))
+
+  const blank = score({ ...tiny, started: false })
+  check('nothing written yet still fires, at any length',
+    blank.contributions.some((c) => c.key === 'emptySilence'))
+  check('...and crosses on the same ramp', blank.score > 0.6, blank.score.toFixed(2))
+
+  // Comments and whitespace leave the AST dump untouched, so they do not count
+  // as having started however much gets typed.
+  const commentsOnly = score({ ...tiny, learnerChars: 140, started: false })
+  check('a buffer of comments has still not started',
+    commentsOnly.contributions.some((c) => c.key === 'emptySilence'))
+
+  // An unparseable buffer has no structural answer; the count is the fallback.
+  const halfTyped = score({ ...tiny, learnerChars: 140, started: null })
+  check('unparseable but long falls back to the count and does not fire',
+    !halfTyped.contributions.some((c) => c.key === 'emptySilence'))
+  const barelyTyped = score({ ...tiny, learnerChars: 3, started: null })
+  check('unparseable and near-empty still fires',
+    barelyTyped.contributions.some((c) => c.key === 'emptySilence'))
 }
 
 console.log('\n--- Thrash --------------------------------------------------------')

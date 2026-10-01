@@ -131,6 +131,28 @@ s = await store()
 check('success is confirmed, not passed over', s.speech?.kind === 'success', s.speech?.text?.slice(0, 60))
 check('...and it asks why it worked', !!s.speech?.followup, String(s.speech?.followup))
 
+// ------------------- what the model is told about the run it is looking at
+// "This exercise has been solved" and "this run was right" are different
+// questions. Keep typing after solving, run something broken, and conflating
+// them tells the model the wrong thing about the code in front of it.
+const sent = []
+const grabBody = (r) => {
+  if (!r.url().includes('/api/teach')) return
+  try { sent.push(JSON.parse(r.postData() ?? '{}')) } catch { /* not ours */ }
+}
+page.on('request', grabBody)
+await runAndWait('nums = [3, 7, 12, 5]\nfor n in nums:\n    print(n * 99)\n')
+sent.length = 0
+await page.evaluate(() => window.__bridge.requestTeaching('ask', 'is this right?'))
+await waitQuiet(40000); await sleep(600)
+page.off('request', grabBody)
+const body = sent[0]
+check('the solved exercise is still marked solved', (await store()).solved[await idx('print-each')] === true)
+check('but a wrong run after solving is not reported as correct',
+  body?.last_run?.correct === false, `last_run.correct=${body?.last_run?.correct}`)
+check('...and the wrong output is what gets sent',
+  (body?.last_run?.stdout ?? '').startsWith('297'), JSON.stringify(body?.last_run?.stdout?.slice(0, 12)))
+
 // --------------------------------- the server gets the last word on the tool
 // The bubble opens on the streamed tool name so the reveal can start early, but
 // leakguard can reject that choice and the server substitutes the pre-written

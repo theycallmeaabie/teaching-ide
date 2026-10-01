@@ -26,6 +26,9 @@ export type ScoreInput = {
   cosmeticStreak: number
   /** When the buffer last returned to a state it had already been in. */
   revertedAt: number | null
+  /** Whether any program of their own exists yet, judged structurally.
+   *  Null when no snapshot has settled, or the buffer does not parse. */
+  started: boolean | null
 }
 
 /**
@@ -113,9 +116,20 @@ export function computeScore(input: ScoreInput): ScoreResult {
 
   // 4. Silence over an empty buffer — "don't know where to start", which is a
   //    different state from silence over half-written code (that is thinking).
-  if (input.learnerChars <= c.emptyBufferMaxChars) {
+  //
+  //    Structure decides this, not length. Across the short end of the ramp a
+  //    finished, correct answer is routinely under the character cap —
+  //    `print(a + b)` is twelve — so a count alone would read nine of the
+  //    twelve short exercises' solutions as an empty buffer and start pushing
+  //    toward 0.65 while the learner sits on a working program. The count is
+  //    kept only as the fallback for a buffer that will not parse, where no
+  //    structural answer exists but a long line is still plainly a start.
+  const emptyBuffer =
+    input.started == null ? input.learnerChars <= c.emptyBufferMaxChars : !input.started
+  if (emptyBuffer) {
     const v = c.wEmptySilence * ramp(idleMs, c.emptySilenceStartMs, c.emptySilenceFullMs)
-    add('emptySilence', 'Empty-buffer silence', v, `${input.learnerChars} chars written, idle ${secs(idleMs)}`)
+    const why = input.started == null ? `${input.learnerChars} chars written` : 'nothing written yet'
+    add('emptySilence', 'Empty-buffer silence', v, `${why}, idle ${secs(idleMs)}`)
   }
 
   // ---------------------------------------------------------------- negative

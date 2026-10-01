@@ -4,7 +4,7 @@ import { config } from './config'
 import { evaluateGate, type GateState, type GateVerdict } from './gate'
 import * as log from './log'
 import { computeScore } from './score'
-import { classify, resetSemantics, seed } from './semantics'
+import { classify, hasStarted, resetSemantics, seed } from './semantics'
 import { programmaticEdit } from './annotations'
 import type { Contribution, Event, SemanticVerdict } from './types'
 
@@ -305,6 +305,7 @@ function tick() {
     learnerChars,
     cosmeticStreak,
     revertedAt,
+    started: hasStarted(),
   })
 
   const gate = evaluateGate(now, score, idleMs, gateState, config)

@@ -11,6 +11,7 @@
     "preview": "vite preview",
     "typecheck": "tsc -b --force",
     "api": ".venv/bin/python -m uvicorn server.main:app --reload --port 8000",
+    "verify-supabase": "node scripts/verify-supabase.mjs",
     "validate-tools": ".venv/bin/python -m server.validate_tools",
     "test": "node tests/run.mjs"
   },

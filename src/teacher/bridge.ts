@@ -1,5 +1,5 @@
 import * as observer from '../observer/observer'
-import { EXERCISES } from '../lesson/exercises'
+import { EXERCISES, isCorrect } from '../lesson/exercises'
 import { useStore, type Interaction, type Speech, type SpeechKind } from '../store'
 import { askTeacher, runResultForWire, translateError, type TeacherDecision } from './client'
 import { fetchHealth } from './health'
@@ -103,7 +103,9 @@ function proseOf(d: TeacherDecision): string {
 
 function targetLineOf(d: TeacherDecision): number | null {
   const v = d.args.target_line
-  return typeof v === 'number' && Number.isFinite(v) ? v : null
+  // Lines are 1-based and the schema uses 0 for "no single line applies", so
+  // anything below 1 means no decoration rather than a line to point at.
+  return typeof v === 'number' && Number.isFinite(v) && v >= 1 ? v : null
 }
 
 /**
@@ -127,6 +129,13 @@ export async function requestTeaching(
   const version = observer.version()
   const tier = st.tier
   const solvedBefore = st.solved[st.exerciseIndex]
+
+  // Whether THIS run was right, which is not the same question as whether the
+  // exercise has ever been solved. Conflating them tells the model "correct, it
+  // printed ..." about a run that printed the wrong thing — once they have
+  // solved it, kept typing, and run something broken.
+  const lastRunCorrect =
+    st.lastResult != null && st.lastResult.ok && isCorrect(st.lastResult.stdout, exercise)
 
   st.set({ teacherBusy: true })
 
@@ -181,7 +190,7 @@ export async function requestTeaching(
       tier,
       tier_texts: exercise.hints.map((h) => h.text),
       attempts: st.attempts,
-      last_run: runResultForWire(st.lastResult, solvedBefore),
+      last_run: runResultForWire(st.lastResult, lastRunCorrect),
       misconceptions: st.misconceptions.map((m) => m.id),
       misconception_notes: notes,
       asked_for_answer: st.askedForAnswer,
