@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react'
 import { EditorView, keymap } from '@codemirror/view'
 import { EditorState, type Extension } from '@codemirror/state'
 import { programmaticEdit } from '../observer/annotations'
+import { editorTheme } from './theme'
 import { basicSetup } from 'codemirror'
 import { python } from '@codemirror/lang-python'
 import { indentWithTab } from '@codemirror/commands'
@@ -51,15 +52,7 @@ export function Editor({
               },
             },
           ]),
-          EditorView.theme({
-            '&': { height: '100%', fontSize: '14px' },
-            '.cm-scroller': {
-              fontFamily:
-                'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
-              lineHeight: '1.6',
-            },
-            '&.cm-focused': { outline: 'none' },
-          }),
+          editorTheme,
           ...(extensions ?? []),
         ],
       }),
@@ -69,7 +62,31 @@ export function Editor({
     viewRef.current = view
     onViewReady?.(view)
 
+    // The teacher's bubble sizes itself against the editor it is in, which the
+    // learner can now drag narrower than any window-based rule could know.
+    // The width decides how the bubble wraps, so a new width changes the
+    // bubble's height — and CodeMirror has to re-read it, or every line number
+    // below the bubble drifts away from the code it labels. CodeMirror ignores
+    // resizes within 75ms of an update (exactly when the bubble and the example
+    // pane arrive together) and has no public "a widget's height changed" call;
+    // the flag below is the one its own font-load handler sets. If a later
+    // CodeMirror drops it, the only loss is that drift.
+    let lastWidth = -1
+    const setWidth = () => {
+      const w = view.dom.clientWidth
+      if (w === lastWidth) return
+      lastWidth = w
+      view.dom.style.setProperty('--editor-w', `${w}px`)
+      const vs = (view as unknown as { viewState?: { mustMeasureContent?: unknown } }).viewState
+      if (vs) vs.mustMeasureContent = true
+      view.requestMeasure()
+    }
+    setWidth()
+    const resize = new ResizeObserver(setWidth)
+    resize.observe(view.dom)
+
     return () => {
+      resize.disconnect()
       view.destroy()
       viewRef.current = null
     }

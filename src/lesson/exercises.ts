@@ -10,9 +10,36 @@ export type HintTier = {
   scratch?: string
 }
 
+export type Section =
+  | 'output'
+  | 'variables'
+  | 'strings'
+  | 'conditionals'
+  | 'lists'
+  | 'loops'
+  | 'dicts'
+  | 'functions'
+
+export const SECTIONS: Section[] = [
+  'output',
+  'variables',
+  'strings',
+  'conditionals',
+  'lists',
+  'loops',
+  'dicts',
+  'functions',
+]
+
 export type Exercise = {
   id: string
   title: string
+  /** Which part of the ramp this belongs to. The learner profile groups by it. */
+  section: Section
+  /** What this exercise is about, at the level of the topic. Goes into the
+   *  teacher's prompt on every call, so it names the idea and never describes
+   *  the mechanics — that is what the hint ladder is for. */
+  concept: string
   prompt: string
   /** Pre-seeded. The learner never types the list — typos in setup code waste
    *  the session on errors that teach nothing. */
@@ -35,6 +62,8 @@ export const EXERCISES: Exercise[] = [
   {
     id: 'say-hello',
     title: 'Say hello',
+    section: 'output',
+    concept: 'printing text to the screen, and text written in quotes',
     prompt: 'Make the program print exactly `Hello, world!` — one line.',
     starter: '# Print the greeting on the line below.\n',
     expectedStdout: 'Hello, world!',
@@ -73,6 +102,8 @@ export const EXERCISES: Exercise[] = [
   {
     id: 'two-lines',
     title: 'Two lines',
+    section: 'output',
+    concept: 'a program running its statements top to bottom, in order',
     prompt: 'Print `Hello` on one line and `Goodbye` on the next.',
     starter: '# Print two lines, one after the other.\n',
     expectedStdout: 'Hello\nGoodbye',
@@ -112,6 +143,8 @@ export const EXERCISES: Exercise[] = [
   {
     id: 'greet-by-name',
     title: 'Greet by name',
+    section: 'variables',
+    concept: 'using a stored value inside a piece of text',
     prompt:
       'The variable `name` already holds `Ada`. Print `Hello, Ada!` — but take the name from the variable rather than typing it again.',
     starter: 'name = "Ada"\n\n# Print the greeting here.\n',
@@ -153,6 +186,8 @@ export const EXERCISES: Exercise[] = [
   {
     id: 'add-two',
     title: 'Add two numbers',
+    section: 'variables',
+    concept: 'arithmetic on stored numbers',
     prompt: '`a` and `b` already hold numbers. Print what they come to together. It should print 42.',
     starter: 'a = 12\nb = 30\n\n# Print the sum here.\n',
     expectedStdout: '42',
@@ -191,6 +226,8 @@ export const EXERCISES: Exercise[] = [
   {
     id: 'rectangle-area',
     title: 'Area of a rectangle',
+    section: 'variables',
+    concept: 'multiplying stored numbers',
     prompt: '`width` and `height` are already set. Print the area. It should print 42.',
     starter: 'width = 7\nheight = 6\n\n# Print the area here.\n',
     expectedStdout: '42',
@@ -229,6 +266,8 @@ export const EXERCISES: Exercise[] = [
   {
     id: 'average-three',
     title: 'The average',
+    section: 'variables',
+    concept: 'order of operations, and division giving a decimal',
     prompt: 'Three numbers are stored. Print their average. It should print 15.0.',
     starter: 'a = 10\nb = 15\nc = 20\n\n# Print the average here.\n',
     expectedStdout: '15.0',
@@ -270,6 +309,8 @@ export const EXERCISES: Exercise[] = [
   {
     id: 'shout-it',
     title: 'Shout it',
+    section: 'strings',
+    concept: 'string methods, called with a dot',
     prompt: '`word` holds `python`. Print it in capitals — `PYTHON`.',
     starter: 'word = "python"\n\n# Print it in capitals here.\n',
     expectedStdout: 'PYTHON',
@@ -308,6 +349,8 @@ export const EXERCISES: Exercise[] = [
   {
     id: 'full-name',
     title: 'The full name',
+    section: 'strings',
+    concept: 'joining pieces of text together',
     prompt:
       '`first` and `last` are already set. Print `Ada Lovelace` — one line, with a single space between the two.',
     starter: 'first = "Ada"\nlast = "Lovelace"\n\n# Print the full name here.\n',
@@ -349,6 +392,8 @@ export const EXERCISES: Exercise[] = [
   {
     id: 'how-long',
     title: 'How long is it?',
+    section: 'strings',
+    concept: 'measuring length with a built-in, and one call inside another',
     prompt: '`word` holds `elephant`. Print how many letters it has. It should print 8.',
     starter: 'word = "elephant"\n\n# Print the number of letters here.\n',
     expectedStdout: '8',
@@ -388,6 +433,8 @@ export const EXERCISES: Exercise[] = [
   {
     id: 'is-it-big',
     title: 'Is it big?',
+    section: 'conditionals',
+    concept: 'choosing between two outcomes with if and else',
     prompt: '`number` holds 42. Print `big` if it is more than ten, and `small` if it is not.',
     starter: 'number = 42\n\n# Your if statement goes here.\n',
     expectedStdout: 'big',
@@ -428,6 +475,8 @@ export const EXERCISES: Exercise[] = [
   {
     id: 'pass-or-fail',
     title: 'Pass or fail',
+    section: 'conditionals',
+    concept: 'comparisons, and whether a boundary value is included',
     prompt: '`score` holds 55. Print `pass` if the score is sixty or more, and `fail` otherwise.',
     starter: 'score = 55\n\n# Your if statement goes here.\n',
     expectedStdout: 'fail',
@@ -468,6 +517,8 @@ export const EXERCISES: Exercise[] = [
   {
     id: 'grade-it',
     title: 'Grade it',
+    section: 'conditionals',
+    concept: 'more than two outcomes, checked in order',
     prompt:
       '`score` holds 74. Print `A` for ninety and above, `B` for seventy to eighty-nine, and `C` for anything lower.',
     starter: 'score = 74\n\n# Your if statement goes here.\n',
@@ -510,6 +561,8 @@ export const EXERCISES: Exercise[] = [
   {
     id: 'first-and-last',
     title: 'First and last',
+    section: 'lists',
+    concept: 'picking items out of a list by position',
     prompt: 'Print the first number in `nums`, then the last — two lines, 3 then 5.',
     starter: 'nums = [3, 7, 12, 5]\n\n# Print the first, then the last.\n',
     expectedStdout: '3\n5',
@@ -550,6 +603,8 @@ export const EXERCISES: Exercise[] = [
   {
     id: 'how-many',
     title: 'How many numbers?',
+    section: 'lists',
+    concept: 'measuring how many items a list holds',
     prompt: 'Print how many numbers are in `nums`. It should print 6.',
     starter: 'nums = [3, 7, 12, 5, 18, 9]\n\n# Print how many there are.\n',
     expectedStdout: '6',
@@ -591,6 +646,8 @@ export const EXERCISES: Exercise[] = [
   {
     id: 'print-each',
     title: 'Print each number',
+    section: 'loops',
+    concept: 'repeating something once per item in a list',
     prompt:
       'The list `nums` already exists. Print each number in it, one per line.',
     starter: 'nums = [3, 7, 12, 5]\n\n# Your loop goes here.\n',
@@ -638,6 +695,8 @@ export const EXERCISES: Exercise[] = [
   {
     id: 'print-doubled',
     title: 'Print each number doubled',
+    section: 'loops',
+    concept: 'using the loop variable as the value itself',
     prompt:
       'Print each number doubled, one per line — 6, 14, 24, 10. The loop is already written.',
     starter: 'nums = [3, 7, 12, 5]\n\nfor n in nums:\n    print(n)\n',
@@ -685,6 +744,8 @@ export const EXERCISES: Exercise[] = [
   {
     id: 'sum-them',
     title: 'Add them all up',
+    section: 'loops',
+    concept: 'building up a running total across a loop',
     prompt:
       'Add all four numbers together and print the total. It should print 27, once.',
     starter: 'nums = [3, 7, 12, 5]\n\nfor n in nums:\n    print(n)\n',
@@ -740,6 +801,8 @@ export const EXERCISES: Exercise[] = [
   {
     id: 'count-above-ten',
     title: 'Count the big ones',
+    section: 'loops',
+    concept: 'counting only the items that meet a condition',
     prompt:
       'Count how many numbers in `nums` are greater than 10, and print that count. It should print 3.',
     starter:
@@ -796,6 +859,8 @@ export const EXERCISES: Exercise[] = [
   {
     id: 'lookup-price',
     title: 'Look up a price',
+    section: 'dicts',
+    concept: 'looking a value up by its key in a dictionary',
     prompt:
       '`prices` pairs each fruit with its price in pence. Print the price of a pear. It should print 65.',
     starter:
@@ -838,6 +903,8 @@ export const EXERCISES: Exercise[] = [
   {
     id: 'make-a-function',
     title: 'Make a function',
+    section: 'functions',
+    concept: 'defining a function that takes a value in and hands one back',
     prompt:
       'Write a function called `double` that takes one number and gives back twice that number. The last line already calls it — it should print 42.',
     starter:

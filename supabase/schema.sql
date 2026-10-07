@@ -34,6 +34,13 @@ create policy "progress is private"
   using (auth.uid() = user_id)
   with check (auth.uid() = user_id);
 
+-- What the teacher remembers about a learner, per exercise. Added after the
+-- first version of this table, so each is `add column if not exists` — running
+-- this file again on an existing project upgrades it in place.
+alter table public.progress add column if not exists begs   int         not null default 0;
+alter table public.progress add column if not exists seen   text[]      not null default '{}';
+alter table public.progress add column if not exists thread jsonb       not null default '[]'::jsonb;
+
 -- ---------------------------------------------------------------- sessions
 
 create table if not exists public.sessions (

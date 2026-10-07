@@ -198,6 +198,7 @@ async def _stream(kwargs: dict[str, Any]) -> AsyncIterator[dict[str, Any]]:
 #: Which argument of each tool holds prose worth streaming to the learner.
 _PROSE_FIELD = {
     "give_hint": "text",
+    "explain": "text",
     "ask_question": "text",
     "translate_error": "plain_english",
     "confirm_success": "text",

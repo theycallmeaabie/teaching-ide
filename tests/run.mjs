@@ -18,10 +18,15 @@ const SUITES = [
   { name: 'diagnose', kind: 'unit', file: 'tests/diagnose.test.mjs', what: 'misconception detectors' },
   { name: 'observer', kind: 'unit', file: 'tests/observer.test.ts', what: 'stuck score + gate scenarios' },
   { name: 'auth', kind: 'unit', file: 'tests/auth.test.py', what: 'who a caller is: anonymous, valid, rejected' },
+  { name: 'teacher', kind: 'unit', file: 'tests/teacher.test.py', what: 'prompt, memory, explain, sanitising, quotas' },
+  { name: 'api', kind: 'unit', file: 'tests/api.test.py', what: 'the HTTP surface with the model stubbed' },
+  { name: 'lesson', kind: 'unit', file: 'tests/lesson.test.ts', what: 'learner profile + did-my-hint-land rule' },
   { name: 'phase1', kind: 'browser', file: 'tests/browser/phase1.mjs', what: 'editor + execution' },
   { name: 'phase2', kind: 'browser', file: 'tests/browser/phase2.mjs', what: 'observer, live' },
   { name: 'phase3', kind: 'browser', file: 'tests/browser/phase3.mjs', what: 'lesson content + ladder' },
   { name: 'phase45', kind: 'browser', file: 'tests/browser/phase45.mjs', what: 'teacher + presentation (needs the API)' },
+  { name: 'accounts', kind: 'browser', file: 'tests/browser/accounts.mjs', what: 'sign-in, saved progress and memory (fake Supabase)' },
+  { name: 'phase6', kind: 'browser', file: 'tests/browser/phase6.mjs', what: 'the product teacher: memory, explain, hints that did not land' },
 ]
 
 const arg = process.argv[2]
@@ -50,7 +55,7 @@ for (const s of chosen) {
       // The venv is where the server's own dependencies live.
       execFileSync('.venv/bin/python', [s.file], { stdio: 'inherit', env: { ...process.env, PYTHONPATH: '.' } })
     } else if (s.file.endsWith('.ts')) {
-      const out = new URL('../.artifacts/observer.test.mjs', import.meta.url).pathname
+      const out = new URL(`../.artifacts/${s.name}.test.mjs`, import.meta.url).pathname
       execFileSync('npx', ['esbuild', s.file, '--bundle', '--platform=node', '--format=esm', `--outfile=${out}`, '--log-level=warning'], { stdio: 'inherit' })
       execFileSync('node', [out], { stdio: 'inherit', env: { ...process.env, CHROME } })
     } else {

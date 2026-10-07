@@ -1,4 +1,5 @@
 import type { RunResult } from '../types'
+import { InfoIcon, TerminalIcon } from './icons'
 
 export function OutputPane({
   result,
@@ -13,15 +14,22 @@ export function OutputPane({
   return (
     <div className="pane output-pane">
       <div className="pane-head">
-        <span>Output</span>
+        <span className="pane-title">
+          <TerminalIcon size={15} />
+          Output
+          <span className={`run-dot ${busy ? 'busy' : ''}`} />
+        </span>
         {result && (
           <span className="muted">{Math.round(result.durationMs)} ms</span>
         )}
       </div>
       <div className="pane-body">
-        {busy && <div className="muted mono">running…</div>}
+        {busy && <div className="output-empty">running…</div>}
         {!busy && !result && (
-          <div className="muted mono">Press Run to execute your code.</div>
+          <div className="output-empty">
+            <InfoIcon size={14} />
+            Press Run to execute your code.
+          </div>
         )}
         {result && (
           <>

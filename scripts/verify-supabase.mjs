@@ -71,7 +71,10 @@ const EX = '__verify__'
 let r = await db
   .from('progress')
   .upsert(
-    { user_id: userId, exercise_id: EX, solved: true, tier: 4, attempts: 2, hints_given: 3 },
+    {
+      user_id: userId, exercise_id: EX, solved: true, tier: 4, attempts: 2, hints_given: 3,
+      begs: 2, seen: ['no-loop'], thread: [{ role: 'learner', text: 'why?' }, { role: 'teacher', text: 'because' }],
+    },
     { onConflict: 'user_id,exercise_id' },
   )
 check('progress row written', !r.error, r.error?.message ?? `exercise_id=${EX}`)
@@ -79,6 +82,9 @@ check('progress row written', !r.error, r.error?.message ?? `exercise_id=${EX}`)
 r = await db.from('progress').select('*').eq('user_id', userId).eq('exercise_id', EX).single()
 check('progress row reads back', !r.error && r.data?.tier === 4, r.error?.message ?? `tier=${r.data?.tier}`)
 check('updated_at is populated by the trigger', !!r.data?.updated_at, String(r.data?.updated_at))
+check('the teacher\'s memory round-trips (begs, seen, thread)',
+  r.data?.begs === 2 && r.data?.seen?.[0] === 'no-loop' && r.data?.thread?.length === 2,
+  `begs=${r.data?.begs} seen=${JSON.stringify(r.data?.seen)} thread=${r.data?.thread?.length} turns — re-run supabase/schema.sql if these are missing`)
 
 // ---------------------------------------------------------------- sessions
 r = await db

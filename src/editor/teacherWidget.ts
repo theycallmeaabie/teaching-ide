@@ -15,6 +15,7 @@ const TIER_LABEL = ['', 'a nudge', 'the line', 'the concept', 'a worked example'
 const KIND_LABEL: Record<Speech['kind'], string> = {
   hint: 'hint',
   question: 'a question for you',
+  explain: 'an explanation',
   error: 'what that error means',
   success: 'that worked',
 }

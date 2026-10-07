@@ -1,4 +1,5 @@
 import puppeteer from 'puppeteer-core'
+import { watchReloads } from '../support/reload-guard.mjs'
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
 const browser = await puppeteer.launch({
@@ -6,11 +7,14 @@ const browser = await puppeteer.launch({
   args: ['--no-sandbox', '--disable-dev-shm-usage'],
 })
 const page = await browser.newPage()
+const reloads = watchReloads(page, 1)
 await page.setViewport({ width: 1400, height: 900 })
 const errors = []
 page.on('pageerror', (e) => errors.push('pageerror: ' + e.message))
 page.on('console', (m) => { if (m.type() === 'error') errors.push('console: ' + m.text()) })
 
+// This suite reads the observer panel, which is closed by default; open it the way a researcher would.
+await page.evaluateOnNewDocument(() => localStorage.setItem('teaching-ide:observer', '1'))
 await page.goto('http://localhost:5173/', { waitUntil: 'networkidle2' })
 await page.waitForFunction(() => document.querySelector('.status')?.textContent.trim() === 'ready', { timeout: 90000 })
 await page.waitForFunction(() => !!window.__teachingIde, { timeout: 20000 })
@@ -152,6 +156,8 @@ const renders = await page.evaluate(async () => {
   return before === document.querySelector('.cm-content')
 })
 check('editor is not re-mounted by log growth', renders)
+
+check('the page was not reloaded by the dev server mid-run', reloads() === 0, reloads.detail())
 
 check('no uncaught page errors', errors.length === 0, errors.join(' | ').slice(0, 200))
 

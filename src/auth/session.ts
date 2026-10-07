@@ -1,7 +1,10 @@
 import type { Session } from '@supabase/supabase-js'
 import { clearProgress, loadProgress } from '../data/progress'
-import { beginNewSession, startSessionRecording, stopSessionRecording } from '../data/sessions'
+import { beginNewSession, flushSession, startSessionRecording, stopSessionRecording } from '../data/sessions'
+import { EXERCISES } from '../lesson/exercises'
+import * as observer from '../observer/observer'
 import { useStore } from '../store'
+import { cancelTeaching } from '../teacher/bridge'
 import { supabase } from './supabase'
 
 /**
@@ -14,6 +17,36 @@ import { supabase } from './supabase'
  */
 
 let applied: string | null = null
+
+/**
+ * Somebody else is about to sit down. Everything that belonged to the last
+ * learner goes: their ticks, their place on the ladder, their conversation, the
+ * code on screen — and the observer's event log, or it would be written into
+ * the next person's session row.
+ */
+function resetLearner() {
+  cancelTeaching()
+  const s = useStore.getState()
+  s.set({
+    exerciseIndex: 0,
+    bufferEpoch: s.bufferEpoch + 1,
+    solved: EXERCISES.map(() => false),
+    attempts: 0,
+    tier: 1,
+    hintsGiven: 0,
+    askedForAnswer: 0,
+    seen: [],
+    recent: [],
+    speech: null,
+    misconceptions: [],
+    lastResult: null,
+    errorPlain: null,
+    lastSilence: null,
+  })
+  observer.resetSession()
+  observer.setStarter(EXERCISES[0].starter)
+  observer.setTeachingState(1, 0)
+}
 
 async function apply(session: Session | null) {
   const store = useStore.getState()
@@ -28,6 +61,7 @@ async function apply(session: Session | null) {
   if (!id) {
     stopSessionRecording()
     clearProgress()
+    resetLearner()
     store.set({ user: null, authReady: true })
     return
   }
@@ -71,5 +105,9 @@ export async function signUp(email: string, password: string): Promise<string | 
 
 export async function signOut(): Promise<void> {
   if (!supabase) return
+  // Write the session log while there is still a session to write it with. By
+  // the time the sign-out event fires the token is gone, so a flush from there
+  // is refused and the last stretch of the log would be lost.
+  await flushSession()
   await supabase.auth.signOut()
 }

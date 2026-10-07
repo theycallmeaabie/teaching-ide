@@ -1,0 +1,14 @@
+# Nothing here belongs in the image: dependencies are installed fresh, the
+# bundle is built inside it, and secrets must never be copied in.
+.git
+.env
+.venv
+node_modules
+dist
+.artifacts
+server/.cache
+**/__pycache__
+tests
+supabase
+*.tsbuildinfo
+*.md
