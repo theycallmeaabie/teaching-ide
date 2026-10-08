@@ -2,10 +2,13 @@
  * Accounts, saved progress and the teacher's memory, against a fake Supabase.
  *
  * Starts its own copy of the app on another port, wired to the fake, so it
- * touches neither your real project nor the dev server.
+ * touches neither your real project nor the dev server. Signing in happens on the
+ * sign-in page (see pages.mjs for that page itself); here it is the way in to
+ * what a signed-in learner keeps.
  */
 import puppeteer from 'puppeteer-core'
 import { watchReloads } from '../support/reload-guard.mjs'
+import { asGuest } from '../support/guest.mjs'
 import { spawn } from 'node:child_process'
 import { start, db, uuidFor } from '../support/fake-supabase.mjs'
 
@@ -38,6 +41,7 @@ db.progress.push(
 
 const b = await puppeteer.launch({ executablePath: process.env.CHROME || '/usr/bin/google-chrome', headless: 'new', args: ['--no-sandbox', '--disable-dev-shm-usage'] })
 const page = await b.newPage()
+await asGuest(page)
 const reloads = watchReloads(page, 2)
 await page.setViewport({ width: 1500, height: 950 })
 const errors = []
@@ -58,22 +62,38 @@ const idx = (id) => page.evaluate(async (id) => (await import('/src/lesson/exerc
 const goTo = async (id) => { await page.evaluate((i) => window.__teaching.goToExercise(i), await idx(id)); await sleep(500) }
 const flush = () => page.evaluate(async () => (await import('/src/data/sessions.ts')).flushSession())
 const boot = async () => {
-  await page.goto(`http://localhost:${APP}/`, { waitUntil: 'networkidle2' })
+  await page.goto(`http://localhost:${APP}/course/python`, { waitUntil: 'networkidle2' })
   await page.waitForFunction(() => document.querySelector('.status')?.textContent.trim() === 'ready', { timeout: 90000 })
   await page.waitForFunction(() => window.__store?.getState().authReady && !!window.__teaching, { timeout: 15000 })
 }
+const clickText = async (sel, text) => {
+  for (const x of await page.$$(sel)) if ((await x.evaluate((n) => n.textContent.trim())) === text) return x.click()
+  throw new Error(`no ${sel} reading "${text}"`)
+}
+const lessonReady = () => page.waitForFunction(() => document.querySelector('.status')?.textContent.trim() === 'ready', { timeout: 90000 })
+// Signing in is a page of its own: from the lesson, the top bar's link goes there and
+// brings them back to the lesson; after a sign-out they are already on it.
 const signIn = async (email, { create = false } = {}) => {
-  for (const x of await page.$$('.authbar button')) if ((await x.evaluate(n => n.textContent.trim())) === 'Sign in') { await x.click(); break }
-  await page.type('.auth-form input[type=email]', email)
-  await page.type('.auth-form input[type=password]', 'pw-123456')
-  if (create) {
-    for (const x of await page.$$('.auth-form button')) if ((await x.evaluate(n => n.textContent.trim())) === 'Create') { await x.click(); break }
-  } else {
-    await page.keyboard.press('Enter')
+  if (!(await page.evaluate(() => location.pathname === '/signin'))) {
+    await page.click('.authbar a')
+    await page.waitForFunction(() => location.pathname === '/signin', { timeout: 10000 })
   }
+  if (create) await clickText('button.linkish', 'Create an account')
+  await page.type('input[name=email]', email)
+  await page.type('input[name=password]', 'pw-123456')
+  await page.keyboard.press('Enter')
   await page.waitForFunction((e) => window.__store.getState().user?.email === e, { timeout: 15000 }, email)
   await page.waitForFunction(() => window.__store.getState().progressLoaded || window.__store.getState().progressError, { timeout: 15000 })
+  await page.waitForFunction(() => location.pathname === '/course/python', { timeout: 15000 })
+  await lessonReady()
   await sleep(800)
+}
+// After a sign-out they are on the sign-in page. A guest gets the lesson with nothing of theirs.
+const continueAsGuest = async () => {
+  await clickText('button', 'Continue as guest')
+  await page.waitForFunction(() => location.pathname === '/course/python', { timeout: 10000 })
+  await lessonReady()
+  await sleep(500)
 }
 const signOut = async () => {
   await page.evaluate(() => import('/src/auth/session.ts').then((m) => m.signOut()))
@@ -137,11 +157,35 @@ try {
 
   await goTo('say-hello')
   await runAndWait('print("A was here")\n')
+
+  // Two saves in quick succession, the first slowed so that on the wire it would land
+  // AFTER the second. A real network does this; the fake is otherwise too orderly to.
+  db.progressWriteDelays = [700, 0]
+  await page.evaluate(async () => {
+    const { saveProgress } = await import('/src/data/progress.ts')
+    const st = window.__store
+    const i = st.getState().exerciseIndex
+    st.getState().set({ recent: [{ role: 'learner', text: 'first' }] })
+    const a = saveProgress(i)
+    st.getState().set({ recent: [{ role: 'learner', text: 'first' }, { role: 'teacher', text: 'second' }] })
+    const b = saveProgress(i)
+    await Promise.all([a, b])
+  })
+  await sleep(300)
+  const raced = db.progress.find((r) => r.user_id === idA && r.exercise_id === 'say-hello')
+  check('a slow early save cannot overwrite a newer one', raced.thread.length === 2 && raced.thread[1].text === 'second', `${raced.thread.length} turns, last "${raced.thread.at(-1)?.text}"`)
+
   await flush(); await sleep(500)
   const sessA = db.sessions.find((x) => x.user_id === idA)
   check('the event log reaches the session row', sessA.event_count >= 2 && sessA.events.some((e) => e.type === 'run'), `${sessA.event_count} events`)
 
   console.log('\n--- A refresh ---------------------------------------------------------')
+  // One more run, and then straight to the refresh with NO manual flush: the 20 s timer
+  // has not fired, so the only way this reaches the database is the write made as the
+  // page goes away.
+  await runAndWait('print("last stretch")\n')
+  const firstSession = () => db.sessions.filter((x) => x.user_id === idA)[0]
+  check('before the refresh the log does not yet hold that run', !JSON.stringify(firstSession().events).includes('last stretch'))
   // Interception holds the Pyodide worker's own requests, so it is off while
   // the page boots and back on afterwards.
   await page.setRequestInterception(false)
@@ -152,6 +196,8 @@ try {
   s = await store()
   check('still signed in', s.user?.email === A)
   check('both solved exercises survive', s.solved[0] && s.solved[await idx('two-lines')])
+  await sleep(500)
+  check('a refresh does not lose the last stretch of the session', JSON.stringify(firstSession().events).includes('last stretch'), `${firstSession().event_count} events`)
   await goTo('sum-them')
   s = await store()
   check('the conversation survives', s.recent.length === 4, `${s.recent.length} turns`)
@@ -167,9 +213,8 @@ try {
   check('A\'s ticks are gone', s.solved.every((x) => !x))
   check("A's place on the ladder is gone", s.tier === 1 && s.attempts === 0 && s.hintsGiven === 0, `tier=${s.tier} attempts=${s.attempts}`)
   check("A's questions are gone", s.askedForAnswer === 0 && s.recent.length === 0 && s.seen.length === 0)
-  check("A's conversation is gone from the screen", !(await page.$('.convo')))
-  check("A's code is gone from the editor", !(await doc()).includes('A again'), JSON.stringify((await doc()).slice(0, 30)))
   check('they are back at the start', s.exerciseIndex === 0)
+  check('signing out takes them to the sign-in page', await page.evaluate(() => location.pathname === '/signin'))
   // A refresh starts a new sitting, so A has two session rows by now: the one
   // from before the refresh, and the one this stretch belongs to.
   const aSessions = db.sessions.filter((x) => x.user_id === idA)
@@ -177,6 +222,11 @@ try {
   check('a refresh starts a new session row rather than overwriting the old one', aSessions.length === 2, `${aSessions.length} rows`)
   check("A's last stretch was written BEFORE signing out, not lost", JSON.stringify(sessAfter.events).includes('A again'), `${sessAfter.event_count} events`)
   check('the observer log starts empty for the next person', (await page.evaluate(() => window.__teachingIde.observer.log.all().length)) === 0, `was ${aEventsBefore}`)
+
+  // The next person to sit down, as a guest, gets the lesson with nothing of A's on it.
+  await continueAsGuest()
+  check("A's conversation is gone from the screen", !(await page.$('.convo')))
+  check("A's code is gone from the editor", !(await doc()).includes('A again'), JSON.stringify((await doc()).slice(0, 30)))
 
   await signIn(B)
   s = await store()
@@ -188,6 +238,7 @@ try {
   await signOut()
 
   console.log('\n--- A guest becomes a learner -------------------------------------------')
+  await continueAsGuest()
   await runAndWait('print("Hello, world!")\n')
   s = await store()
   check('a guest solves the first exercise', s.solved[0] === true && s.user === null)

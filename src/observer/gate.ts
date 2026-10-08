@@ -52,7 +52,7 @@ export function evaluateGate(
     budgetRemaining,
     reason: allowed
       ? trigger === 'hardIdle'
-        ? `hard idle ceiling — ${(idleMs / 1000).toFixed(0)}s of silence`
+        ? `hard idle ceiling: ${(idleMs / 1000).toFixed(0)}s of silence`
         : `stuck score ${score.toFixed(2)} over ${c.threshold.toFixed(2)}`
       : blockedBy.join(', '),
   }

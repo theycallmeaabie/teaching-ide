@@ -3,6 +3,7 @@ import type { Misconception, RunResult, RunnerStatus } from './types'
 import { EXERCISES } from './lesson/exercises'
 import type { TeacherHealth } from './teacher/health'
 import type { AuthUser } from './auth/supabase'
+import { readGuest } from './auth/guest'
 
 export type SpeechKind = 'hint' | 'question' | 'explain' | 'error' | 'success'
 
@@ -20,7 +21,15 @@ export type Speech = {
   streaming: boolean
 }
 
-export type Interaction = { role: 'teacher' | 'learner'; text: string }
+/** One turn of the conversation. `kind` and `tier` say what sort of thing the
+ *  teacher was doing (a rung-2 hint, an explanation) so the conversation can
+ *  show it. Optional: turns saved before they existed simply have neither. */
+export type Interaction = {
+  role: 'teacher' | 'learner'
+  text: string
+  kind?: SpeechKind
+  tier?: number | null
+}
 
 type AppState = {
   runnerStatus: RunnerStatus
@@ -58,6 +67,8 @@ type AppState = {
   /** False until the first auth check settles, so the UI does not flash a
    *  sign-in form at someone who is already signed in. */
   authReady: boolean
+  /** They chose "Continue as guest" on the sign-in page: in, but nothing is saved. */
+  guest: boolean
   /** Saved progress has been read back. Until then, do not write it out —
    *  an empty store would overwrite real rows with blanks. */
   progressLoaded: boolean
@@ -93,6 +104,7 @@ export const useStore = create<AppState>((set) => ({
 
   user: null,
   authReady: false,
+  guest: readGuest(),
   progressLoaded: false,
   progressError: null,
 

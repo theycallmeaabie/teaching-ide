@@ -22,6 +22,15 @@ BASE_URL = os.environ.get("LLM_BASE_URL", "https://api.groq.com/openai/v1")
 MODEL = os.environ.get("LLM_MODEL", "llama-3.3-70b-versatile")
 API_KEY = os.environ.get("LLM_API_KEY", "")
 
+#: Speech to text goes through the same provider, so a deployment is still one
+#: set of credentials. Not every OpenAI-compatible provider has an audio
+#: endpoint, so set STT_MODEL=none for one that does not, and voice says so
+#: instead of failing. (Whisper is the model the free Groq plan offers.)
+STT_MODEL = os.environ.get("STT_MODEL", "whisper-large-v3-turbo")
+#: Empty means "detect it". Short clips detect badly, so set it when learners
+#: all speak one language.
+STT_LANGUAGE = os.environ.get("STT_LANGUAGE", "")
+
 _client = AsyncOpenAI(base_url=BASE_URL, api_key=API_KEY or "not-needed")
 
 #: Last thing the provider did, so the UI can say when the teacher is running on
@@ -244,3 +253,104 @@ def _partial_string(buffer: str, key: str) -> str | None:
         out.append(ch)
         i += 1
     return "".join(out)
+
+
+# ------------------------------------------------------------- speech to text
+
+#: Whisper is steered by what it has just "heard", so seeding it with the words
+#: a beginner is likely to say keeps "colon" from becoming "Colin" and "print"
+#: from becoming "prints". Providers cap this (Groq: 224 tokens).
+STT_PROMPT = (
+    "A beginner asking a question about Python code: print, input, variable, "
+    "string, integer, list, for loop, while loop, if, else, def, return, colon, "
+    "parentheses, quotes, indent, error."
+)
+
+
+class SttError(Exception):
+    """Voice could not be turned into text. `kind` says whose problem it is,
+    which is what the caller needs to choose a status; `reason` is safe to show."""
+
+    def __init__(self, kind: str, reason: str):
+        super().__init__(reason)
+        self.kind = kind  # "unavailable" | "rate" | "bad_audio"
+        self.reason = reason
+
+
+def _field(obj: Any, name: str, default: Any = None) -> Any:
+    return obj.get(name, default) if isinstance(obj, dict) else getattr(obj, name, default)
+
+
+def _speech_only(resp: Any) -> str:
+    """Drop what Whisper invents out of silence.
+
+    On a quiet or noisy clip it will confidently "transcribe" things like "Thank
+    you." Each segment carries the model's own estimate of that, so apply the
+    rule Whisper itself uses to call a segment silence (no-speech probability
+    high and the text unlikely), plus its repetition guard. Falls back to the
+    plain text for a provider that sends no segments.
+    """
+    segments = _field(resp, "segments") or []
+    if not segments:
+        text = (_field(resp, "text", "") or "").strip()
+    else:
+        kept = []
+        for seg in segments:
+            silent = _field(seg, "no_speech_prob", 0) > 0.6 and _field(seg, "avg_logprob", 0) < -1.0
+            looping = _field(seg, "compression_ratio", 0) > 2.4
+            if not (silent or looping):
+                kept.append((_field(seg, "text", "") or "").strip())
+        text = " ".join(t for t in kept if t).strip()
+    # A steady tone or hiss comes back as a lone "." with the model fully
+    # confident (no_speech_prob 0.0, seen against the real provider), so the
+    # probabilities cannot catch it. Nothing with no letter or digit in it is a
+    # question.
+    return text if any(ch.isalnum() for ch in text) else ""
+
+
+async def transcribe(audio: bytes, filename: str, mime: str) -> str:
+    """Speech to text. Returns "" when nothing intelligible was said.
+
+    Deliberately does not touch `last_outcome`: that feeds the "hints:
+    pre-written" notice, and a refused audio upload says nothing about whether
+    the teacher can think.
+    """
+    from openai import (
+        APIConnectionError,
+        APIStatusError,
+        AuthenticationError,
+        BadRequestError,
+        InternalServerError,
+        NotFoundError,
+        PermissionDeniedError,
+        RateLimitError,
+    )
+
+    if STT_MODEL.strip().lower() in ("", "none", "off"):
+        raise SttError("unavailable", "voice is switched off on this server")
+    if not API_KEY:
+        raise SttError("unavailable", "voice is not set up on this server")
+
+    kwargs: dict[str, Any] = dict(
+        model=STT_MODEL,
+        file=(filename, audio, mime),
+        response_format="verbose_json",
+        temperature=0,
+        prompt=STT_PROMPT,
+    )
+    if STT_LANGUAGE:
+        kwargs["language"] = STT_LANGUAGE
+
+    try:
+        resp = await _client.audio.transcriptions.create(**kwargs)
+    except RateLimitError:
+        raise SttError("rate", "voice is busy right now") from None
+    except BadRequestError as e:
+        if "model" in str(e).lower():
+            raise SttError("unavailable", "this provider has no speech model") from None
+        raise SttError("bad_audio", "that recording could not be read") from None
+    except (NotFoundError, AuthenticationError, PermissionDeniedError):
+        raise SttError("unavailable", "this provider does not offer voice") from None
+    except (APIConnectionError, InternalServerError, APIStatusError):
+        raise SttError("unavailable", "the speech service did not answer") from None
+    return _speech_only(resp)

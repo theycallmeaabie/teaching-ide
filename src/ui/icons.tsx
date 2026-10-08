@@ -120,10 +120,23 @@ export const InfoIcon = (p: P) => (
   </Icon>
 )
 
+export const StopIcon = (p: P) => (
+  <Icon {...p}>
+    <rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor" />
+  </Icon>
+)
+
 export const MicIcon = (p: P) => (
   <Icon {...p}>
     <rect x="9" y="2" width="6" height="12" rx="3" />
     <path d="M5 11a7 7 0 0 0 14 0" />
     <path d="M12 18v4" />
+  </Icon>
+)
+
+export const LockIcon = (p: P) => (
+  <Icon {...p}>
+    <rect x="4" y="11" width="16" height="10" rx="2" />
+    <path d="M8 11V7a4 4 0 0 1 8 0v4" />
   </Icon>
 )

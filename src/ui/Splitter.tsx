@@ -6,12 +6,12 @@ type Props = {
   label: string
   /** The size being controlled, in px. Read when a drag starts. */
   getSize: () => number
-  /** Smallest and largest allowed size in px. Read on every move — they depend on the window. */
+  /** Smallest and largest allowed size in px. Read on every move, since they depend on the window. */
   bounds: () => [number, number]
   onSize: (px: number) => void
   /** 'backward' for a panel docked at the far end: dragging up/left makes it bigger. */
   grow?: 'forward' | 'backward'
-  /** Drag or key press finished — the place to persist. */
+  /** Drag or key press finished. The place to persist. */
   onCommit?: () => void
   /** Double-click or Enter: back to the default size. */
   onReset?: () => void
@@ -68,7 +68,7 @@ export function Splitter({ orientation, label, getSize, bounds, onSize, grow = '
       role="separator"
       aria-orientation={orientation === 'col' ? 'vertical' : 'horizontal'}
       aria-label={label}
-      title={`${label} — drag, or double-click to reset`}
+      title={`${label}: drag, or double-click to reset`}
       tabIndex={0}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}

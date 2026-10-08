@@ -14,7 +14,10 @@
  */
 export function watchReloads(page, expected = 1) {
   const at = []
-  page.on('framenavigated', (f) => { if (f === page.mainFrame()) at.push(Date.now()) })
+  // `load`, not `framenavigated`: the app now moves between pages without leaving the
+  // document (sign-in, courses, lesson), and those navigations are not reloads. A dev
+  // server reload is a new document, which is exactly what `load` fires for.
+  page.on('load', () => at.push(Date.now()))
   const count = () => Math.max(0, at.length - expected)
   count.detail = () =>
     count() === 0

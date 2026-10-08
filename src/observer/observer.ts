@@ -40,6 +40,8 @@ export type ObserverSnapshot = {
 
 let lastActivityAt = Date.now()
 let lastEditAt: number | null = null
+/** When the learner last arrived at the editor. See `start`. */
+let arrivedAt = Date.now()
 let starterLines = new Set<string>()
 let learnerChars = 0
 let cosmeticStreak = 0
@@ -301,7 +303,9 @@ function tick() {
     config,
     events,
     lastActivityAt,
-    lastEditAt,
+    // A run from before they arrived is not one they have "left untouched": the
+    // editor they came back to is not the one it was run in.
+    lastEditAt: Math.max(lastEditAt ?? 0, arrivedAt),
     learnerChars,
     cosmeticStreak,
     revertedAt,
@@ -341,6 +345,12 @@ function tick() {
 
 export function start() {
   if (ticker != null) return
+  // Attention starts now. This module is loaded with the app, but the lesson is
+  // reached later: after a sign-in page, or back from the course page. Minutes
+  // spent somewhere else are not minutes of being stuck, and counting them would
+  // have the teacher speak the instant someone sat down.
+  arrivedAt = Date.now()
+  markActivity(arrivedAt)
   ticker = window.setInterval(tick, TICK_MS)
 }
 

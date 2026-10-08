@@ -20,6 +20,10 @@ export const supabase: SupabaseClient | null =
       })
     : null
 
+/** Where the project is and the public key, for the one request that has to be
+ *  made by hand because the page is going away (see data/sessions.ts). */
+export const supabaseConfig = url && anonKey ? { url: String(url).replace(/\/$/, ''), key: String(anonKey) } : null
+
 /** True when `.env` carries a project. The UI hides the sign-in bar otherwise. */
 export const authConfigured = supabase !== null
 

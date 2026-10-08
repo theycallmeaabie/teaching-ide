@@ -76,8 +76,8 @@ TOOLS = [
         "function": {
             "name": "explain",
             "description": (
-                "Explain an idea they asked about — what a keyword is, how a "
-                "concept works, why something behaves as it does. This is "
+                "Explain an idea they asked about, such as what a keyword is, how a "
+                "concept works, or why something behaves as it does. This is "
                 "teaching, and teaching is free. What is NOT free is the answer "
                 "to their exercise: never explain in a way that hands it over."
             ),

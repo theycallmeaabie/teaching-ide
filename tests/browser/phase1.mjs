@@ -1,6 +1,7 @@
 import puppeteer from 'puppeteer-core'
+import { asGuest, LESSON } from '../support/guest.mjs'
 
-const APP = 'http://localhost:5173/'
+const APP = LESSON
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
 const browser = await puppeteer.launch({
@@ -9,6 +10,7 @@ const browser = await puppeteer.launch({
   args: ['--no-sandbox', '--disable-dev-shm-usage'],
 })
 const page = await browser.newPage()
+await asGuest(page)
 await page.setViewport({ width: 1280, height: 800 })
 
 const errors = []

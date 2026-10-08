@@ -12,7 +12,7 @@ export function ThemeToggle() {
       onClick={() => setTheme(next)}
       title={`Switch to the ${next} theme`}
     >
-      {theme === 'dark' ? <SunIcon size={18} /> : <MoonIcon size={18} />}
+      {theme === 'dark' ? <SunIcon size={22} /> : <MoonIcon size={22} />}
       <span className="sr-only">{theme === 'dark' ? 'Light' : 'Dark'}</span>
     </button>
   )

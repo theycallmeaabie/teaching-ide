@@ -17,8 +17,9 @@ from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.exceptions import HTTPException
 
-from . import auth, cache, errors, leakguard, llm, quota
+from . import auth, cache, errors, leakguard, llm, quota, stt
 from .models import RunErrorIn, TeachRequest
 from .prompts import SYSTEM, build_context
 from .tools import TOOLS, TOOL_NAMES
@@ -270,6 +271,10 @@ async def check_ladder(payload: dict) -> dict[str, Any]:
     }
 
 
+# Voice questions: audio in, text out. Its own limits, not the teacher's.
+app.include_router(stt.router)
+
+
 @app.get("/api/health")
 async def health() -> dict[str, Any]:
     return {
@@ -279,6 +284,9 @@ async def health() -> dict[str, Any]:
         "key_present": bool(llm.API_KEY),
         "cache": cache.stats(),
         "llm": llm.last_outcome,
+        # Whether a presented token must verify. False means every call is treated
+        # as anonymous, which is the default until SUPABASE_JWT_SECRET is set.
+        "verifies_tokens": auth.ENABLED,
     }
 
 
@@ -296,5 +304,27 @@ async def security_headers(request: Request, call_next):
 # Mounted last so every /api route above takes precedence. In development there
 # is no dist/ worth serving and Vite does it instead.
 DIST = Path(__file__).resolve().parent.parent / "dist"
+
+
+class SinglePageApp(StaticFiles):
+    """The built app, with one addition: a path that is not a file is a page.
+
+    The app's pages (/signin, /courses, /course/python) are routes in the browser
+    and exist nowhere on disk, so a refresh or a pasted link would otherwise be a
+    404. Anything that looks like a file (it has an extension) or belongs to the
+    API stays a real 404, so a missing script is reported as missing rather than
+    answered with a web page it will fail to parse, and a mistyped API path is not
+    answered with HTML that looks like success.
+    """
+
+    async def get_response(self, path, scope):
+        try:
+            return await super().get_response(path, scope)
+        except HTTPException as exc:
+            if exc.status_code != 404 or path == "api" or path.startswith("api/") or "." in Path(path).name:
+                raise
+            return await super().get_response("index.html", scope)
+
+
 if (DIST / "index.html").is_file():
-    app.mount("/", StaticFiles(directory=DIST, html=True), name="web")
+    app.mount("/", SinglePageApp(directory=DIST, html=True), name="web")

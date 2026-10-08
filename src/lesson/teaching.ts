@@ -4,6 +4,7 @@ import { useStore } from '../store'
 import { cancelTeaching, explainError, isAskingForAnswer, requestTeaching } from '../teacher/bridge'
 import type { RunResult } from '../types'
 import { saveProgress, savedFor, THREAD_CAP } from '../data/progress'
+import { firstUnsolved, type Course } from './courses'
 import { EXERCISES, isCorrect } from './exercises'
 
 /** Three "just tell me"s descend a rung. Not a refusal, but not free either. */
@@ -119,4 +120,43 @@ export function goToExercise(index: number) {
   })
   observer.setStarter(EXERCISES[index].starter)
   observer.setTeachingState(saved?.tier ?? 1, saved?.attempts ?? 0)
+}
+
+/**
+ * "Continue" on the course page. Someone who has just signed in is at the top
+ * of the ramp with their solved ticks restored, and opening exercise 1 again
+ * would not be continuing, so they are taken to the first one they have not
+ * solved. A sitting that has already moved knows where it is and is left alone.
+ */
+export function resumeCourse(course: Course) {
+  const s = useStore.getState()
+  if (s.exerciseIndex !== 0 || s.attempts > 0 || s.recent.length > 0) return
+  const next = firstUnsolved(course, s.solved)
+  if (next != null && next !== 0) goToExercise(next)
+}
+
+/**
+ * The learner is leaving the editor for another page. Bank where they got to,
+ * drop an answer still on its way, and let go of what only made sense beside the
+ * code on screen: the editor comes back at the starter, so the speech bubble, the
+ * last run's output and the misconceptions read off that code would describe
+ * something that is no longer there. The conversation and the ladder are kept,
+ * as they are when moving between exercises.
+ */
+export function leaveLesson() {
+  // Only for someone signed in. When the page is leaving BECAUSE they signed out
+  // the learner state has already been reset, and banking it would plant a blank
+  // row for the next person. A guest's place is held in the store regardless.
+  if (useStore.getState().user) void saveProgress(useStore.getState().exerciseIndex)
+  cancelTeaching()
+  // Code left running in a worker nobody is watching would run on, unseen.
+  if (runner.isRunning) runner.stop()
+  useStore.getState().set({
+    speech: null,
+    misconceptions: [],
+    lastResult: null,
+    errorPlain: null,
+    lastSilence: null,
+    slowRun: false,
+  })
 }

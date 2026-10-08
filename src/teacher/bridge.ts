@@ -4,6 +4,7 @@ import { useStore, type Interaction, type Speech, type SpeechKind } from '../sto
 import { askTeacher, runResultForWire, translateError, type TeacherDecision } from './client'
 import { escalatedTier, hashBuffer, lastHintFailed, type LastHint } from './escalation'
 import { fetchHealth } from './health'
+import { plain } from './plain'
 import { learnerProfile, saveProgress, THREAD_CAP } from '../data/progress'
 
 let speechId = 0
@@ -123,7 +124,7 @@ const KIND: Record<string, SpeechKind> = {
 
 function proseOf(d: TeacherDecision): string {
   const a = d.args
-  return String(a.text ?? a.plain_english ?? a.reason ?? '')
+  return plain(String(a.text ?? a.plain_english ?? a.reason ?? ''), true)
 }
 
 function targetLineOf(d: TeacherDecision): number | null {
@@ -242,7 +243,7 @@ export async function requestTeaching(
       stuck_score: observer.currentScore(),
       trigger,
       learner_question: learnerQuestion,
-      recent: st.recent.slice(-WIRE_TURNS),
+      recent: st.recent.slice(-WIRE_TURNS).map(({ role, text }) => ({ role, text })),
       profile: learnerProfile(),
       previous_hint_failed: previousFailed,
       session_id: SESSION_ID,
@@ -253,7 +254,9 @@ export async function requestTeaching(
         open(KIND[tool] ?? 'hint', tool === 'give_hint' ? tier : null)
       },
       onDelta: (text) => {
-        revealTarget += text
+        // The whole text so far, not just this chunk: a dash and its spaces
+        // can arrive split across chunks.
+        revealTarget = plain(revealTarget + text)
       },
     },
     inFlight.signal,
@@ -297,7 +300,7 @@ export async function requestTeaching(
     stopReveal()
     useStore.getState().set({
       speech: null,
-      lastSilence: `discarded — the buffer moved on (v${version} → v${observer.version()})`,
+      lastSilence: `discarded: the buffer moved on (v${version} → v${observer.version()})`,
     })
     return
   }
@@ -314,7 +317,7 @@ export async function requestTeaching(
         ...s,
         targetLine: line,
         source: decision.source,
-        followup: (decision.args.followup_question as string | undefined) || null,
+        followup: plain((decision.args.followup_question as string | undefined) ?? '', true) || null,
         // An explanation's example goes beside their code, never into it.
         scratch:
           decision.tool === 'explain'
@@ -326,7 +329,12 @@ export async function requestTeaching(
     })
   }
 
-  const interaction: Interaction = { role: 'teacher', text: prose }
+  const interaction: Interaction = {
+    role: 'teacher',
+    text: prose,
+    kind,
+    tier: kind === 'hint' ? tier : null,
+  }
   useStore.getState().set({
     recent: [...useStore.getState().recent, interaction].slice(-THREAD_CAP),
     hintsGiven: useStore.getState().hintsGiven + (kind === 'hint' ? 1 : 0),
@@ -360,7 +368,10 @@ function fallbackToPrewritten(id: number, trigger: string, note: string) {
   if (!h) return
   lastHints.set(exercise.id, { hash: hashBuffer(observer.doc()), tier: st.tier })
   st.set({
-    recent: [...st.recent, { role: 'teacher' as const, text: h.text }].slice(-THREAD_CAP),
+    recent: [
+      ...st.recent,
+      { role: 'teacher' as const, text: plain(h.text, true), kind: 'hint' as const, tier: h.tier },
+    ].slice(-THREAD_CAP),
     speech: {
       id,
       kind: 'hint',

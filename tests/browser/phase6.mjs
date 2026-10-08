@@ -6,9 +6,11 @@
  */
 import puppeteer from 'puppeteer-core'
 import { watchReloads } from '../support/reload-guard.mjs'
+import { asGuest, LESSON } from '../support/guest.mjs'
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const b = await puppeteer.launch({ executablePath: process.env.CHROME || '/usr/bin/google-chrome', headless: 'new', args: ['--no-sandbox', '--disable-dev-shm-usage'] })
 const page = await b.newPage()
+await asGuest(page)
 const reloads = watchReloads(page, 1)
 await page.setViewport({ width: 1500, height: 950 })
 const errors = []
@@ -35,7 +37,7 @@ const hintAt = (tier) => sse([
 const sent = []
 let reply = () => EXPLAIN
 
-await page.goto('http://localhost:5173/', { waitUntil: 'networkidle2' })
+await page.goto(LESSON, { waitUntil: 'networkidle2' })
 await page.waitForFunction(() => document.querySelector('.status')?.textContent.trim() === 'ready', { timeout: 90000 })
 await page.waitForFunction(() => !!window.__teaching && !!window.__bridge, { timeout: 20000 })
 
@@ -109,6 +111,20 @@ check('both sides of the exchange are kept', s.recent.length === 2 && s.recent[0
 check('the conversation panel appears', !!(await page.$('.convo')))
 check('...and opens itself, because the learner just spoke', (await page.$$('.convo-turn')).length === 2)
 check('...showing what was said', (await page.$eval('.convo-body', n => n.innerText)).includes('what does print do?'))
+const chips = await page.$$eval('.convo-chip', (ns) => ns.map((n) => n.textContent))
+check('the teacher\'s turn says what kind of reply it was', chips.length === 1 && /explanation/i.test(chips[0]), JSON.stringify(chips))
+check('...and the learner\'s own turn carries no label of that kind', (await page.$$('.convo-learner .convo-chip')).length === 0)
+check('a turn remembers its kind, so it survives a refresh', (await store()).recent[1].kind === 'explain', JSON.stringify((await store()).recent[1].kind))
+const type = await page.evaluate(() => {
+  const text = getComputedStyle(document.querySelector('.convo-text')).fontSize
+  const small = [...document.querySelectorAll('.convo-who, .convo-chip')].map((n) => parseFloat(getComputedStyle(n).fontSize))
+  const wraps = [...document.querySelectorAll('.convo-who, .convo-chip')].some((n) => n.getBoundingClientRect().height > 20)
+  return { text, smallest: Math.min(...small), wraps }
+})
+check('conversation text is 15px', type.text === '15px', type.text)
+check('labels are never below 11px and never wrap', type.smallest >= 11 && !type.wraps, `${type.smallest}px, wraps=${type.wraps}`)
+check('the log still fills the dock, so dragging its edge keeps working',
+  await page.$eval('.convo-body', (n) => { const c = getComputedStyle(n); return c.flexGrow === '1' && c.overflowY === 'auto' && c.minHeight === '0px' }))
 
 body = await ask('and what are the quotes for?')
 check('the next question carries the earlier exchange', body.recent.length === 3 && body.recent[0].text === 'what does print do?',

@@ -24,7 +24,7 @@ function describe(e: Event): { kind: string; text: string } {
     case 'edit':
       return {
         kind: 'edit',
-        text: `lines ${e.linesChanged.join(',') || '—'} · ${e.charDelta >= 0 ? '+' : ''}${e.charDelta} · ${e.semantic ?? '?'}`,
+        text: `lines ${e.linesChanged.join(',') || 'none'} · ${e.charDelta >= 0 ? '+' : ''}${e.charDelta} · ${e.semantic ?? '?'}`,
       }
     case 'run':
       return {
@@ -125,13 +125,13 @@ export function DevPanel({ onClose }: { onClose: () => void }) {
             <span>cooldown</span>
             <b>{(snap.gate.cooldownRemainingMs / 1000).toFixed(0)}s</b>
             <span>hint tier</span>
-            <b>{snap.hintTier ?? '—'}</b>
+            <b>{snap.hintTier ?? 'none'}</b>
             <span>learner chars</span>
             <b>{snap.learnerChars}</b>
             <span>non-progress</span>
             <b>{snap.cosmeticStreak.toFixed(1)}</b>
             <span>last edit was</span>
-            <b>{snap.lastSemantic ?? '—'}</b>
+            <b>{snap.lastSemantic ?? 'none'}</b>
             <span>events</span>
             <b>{snap.eventCount}</b>
           </div>
@@ -158,9 +158,9 @@ export function DevPanel({ onClose }: { onClose: () => void }) {
             <span>state</span>
             <b>{teacherBusy ? 'asking…' : speech ? speech.kind : 'quiet'}</b>
             <span>words from</span>
-            <b>{speech?.source ?? '—'}</b>
+            <b>{speech?.source ?? 'none'}</b>
             <span>target line</span>
-            <b>{speech?.targetLine ?? '—'}</b>
+            <b>{speech?.targetLine ?? 'none'}</b>
             <span>begged</span>
             <b>{askedForAnswer}</b>
           </div>

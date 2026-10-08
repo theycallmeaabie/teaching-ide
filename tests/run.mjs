@@ -20,13 +20,17 @@ const SUITES = [
   { name: 'auth', kind: 'unit', file: 'tests/auth.test.py', what: 'who a caller is: anonymous, valid, rejected' },
   { name: 'teacher', kind: 'unit', file: 'tests/teacher.test.py', what: 'prompt, memory, explain, sanitising, quotas' },
   { name: 'api', kind: 'unit', file: 'tests/api.test.py', what: 'the HTTP surface with the model stubbed' },
+  { name: 'stt', kind: 'unit', file: 'tests/stt.test.py', what: 'voice questions: limits, formats, provider errors (stubbed)' },
+  { name: 'plain', kind: 'unit', file: 'tests/plain.test.ts', what: 'the long dash taken out of the teacher\'s words, even when a stream splits it' },
   { name: 'lesson', kind: 'unit', file: 'tests/lesson.test.ts', what: 'learner profile + did-my-hint-land rule' },
   { name: 'phase1', kind: 'browser', file: 'tests/browser/phase1.mjs', what: 'editor + execution' },
   { name: 'phase2', kind: 'browser', file: 'tests/browser/phase2.mjs', what: 'observer, live' },
   { name: 'phase3', kind: 'browser', file: 'tests/browser/phase3.mjs', what: 'lesson content + ladder' },
   { name: 'phase45', kind: 'browser', file: 'tests/browser/phase45.mjs', what: 'teacher + presentation (needs the API)' },
   { name: 'accounts', kind: 'browser', file: 'tests/browser/accounts.mjs', what: 'sign-in, saved progress and memory (fake Supabase)' },
+  { name: 'pages', kind: 'browser', file: 'tests/browser/pages.mjs', what: 'sign-in, guest, the course page, routing, password reset, no-Supabase mode (fake Supabase; no model)' },
   { name: 'phase6', kind: 'browser', file: 'tests/browser/phase6.mjs', what: 'the product teacher: memory, explain, hints that did not land' },
+  { name: 'voice', kind: 'browser', file: 'tests/browser/voice.mjs', what: 'the mic: record, transcribe into the box, never auto-send (fake mic, stubbed server)' },
 ]
 
 const arg = process.argv[2]

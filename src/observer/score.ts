@@ -83,13 +83,13 @@ export function computeScore(input: ScoreInput): ScoreResult {
   for (const [line, n] of visits) if (n > hotCount) [hotLine, hotCount] = [line, n]
   if (hotCount >= c.thrashLineVisits) {
     const v = c.wThrashLines * clamp01((hotCount - c.thrashLineVisits + 1) / 2)
-    add('thrashLines', 'Thrash — same line', v, `line ${hotLine} touched ${hotCount}× in ${secs(c.thrashWindowMs)}`)
+    add('thrashLines', 'Thrash: same line', v, `line ${hotLine} touched ${hotCount}× in ${secs(c.thrashWindowMs)}`)
   }
 
   // 2b. Thrash — something written and then taken back out.
   if (input.revertedAt != null && input.revertedAt >= thrashStart) {
     const v = c.wUndoRevert * ageDecay(now - input.revertedAt, c.thrashWindowMs)
-    add('undoRevert', 'Thrash — made and undone', v, `reverted ${secs(now - input.revertedAt)} ago`)
+    add('undoRevert', 'Thrash: made and undone', v, `reverted ${secs(now - input.revertedAt)} ago`)
   }
 
   // 2c. Thrash — the same error, again.
@@ -105,7 +105,7 @@ export function computeScore(input: ScoreInput): ScoreResult {
   if (errStreak >= 2) {
     const v = c.wRepeatedError * clamp01((errStreak - 1) / 2)
     const top = runs[runs.length - 1].result.error!
-    add('repeatedError', 'Thrash — same error again', v, `${top.type} on line ${top.line} ×${errStreak}`)
+    add('repeatedError', 'Thrash: same error again', v, `${top.type} on line ${top.line} ×${errStreak}`)
   }
 
   // 3. Edits are happening but the program is not changing.

@@ -67,7 +67,7 @@ RULES: list[_Rule] = [
     _rule(
         "SyntaxError",
         r"expected ':'",
-        lambda m: "Python needs a colon at the end of this line — for example `for n in nums:`.",
+        lambda m: "Python needs a colon at the end of this line, for example `for n in nums:`.",
     ),
     _rule(
         "SyntaxError",
@@ -95,15 +95,15 @@ RULES: list[_Rule] = [
         r"list index out of range",
         lambda m: (
             "You asked the list for a position it does not have. "
-            "A list of four items has positions 0, 1, 2 and 3 — there is no position 4."
+            "A list of four items has positions 0, 1, 2 and 3. There is no position 4."
         ),
     ),
     _rule(
         "TypeError",
         r"can only concatenate str \(not \"(?P<other>\w+)\"\) to str",
         lambda m: (
-            f"You are joining text and {_a(m['other'])} with `+`. Python will not mix the two — "
-            "either make them both text, or both numbers."
+            f"You are joining text and {_a(m['other'])} with `+`. Python will not mix the two. "
+            "Either make them both text, or both numbers."
         ),
     ),
     _rule(
@@ -142,7 +142,7 @@ RULES: list[_Rule] = [
     _rule(
         "EOFError",
         r".",
-        lambda m: "`input()` does not work in this editor — there is nowhere to type an answer.",
+        lambda m: "`input()` does not work in this editor, because there is nowhere to type an answer.",
     ),
 ]
 

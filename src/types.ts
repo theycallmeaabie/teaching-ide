@@ -33,5 +33,9 @@ export type MisconceptionId =
   | 'accumulator-reassigned'
   | 'accumulator-printed-inside-loop'
   | 'loop-body-outside'
+  // JavaScript only
+  | 'for-in-over-array'
+  | 'assign-in-condition'
+  | 'missing-return'
 
 export type Misconception = { id: MisconceptionId; line: number | null }

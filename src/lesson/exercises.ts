@@ -64,7 +64,7 @@ export const EXERCISES: Exercise[] = [
     title: 'Say hello',
     section: 'output',
     concept: 'printing text to the screen, and text written in quotes',
-    prompt: 'Make the program print exactly `Hello, world!` — one line.',
+    prompt: 'Make the program print exactly `Hello, world!` on one line.',
     starter: '# Print the greeting on the line below.\n',
     expectedStdout: 'Hello, world!',
     hints: [
@@ -91,7 +91,7 @@ export const EXERCISES: Exercise[] = [
       },
       {
         tier: 5,
-        text: 'On line 2, type `print("Hello, world!")` — the quotes, the comma and the exclamation mark are all part of it. Type it yourself.',
+        text: 'On line 2, type `print("Hello, world!")`. The quotes, the comma and the exclamation mark are all part of it. Type it yourself.',
         targetLine: 2,
         scratch: '# Same shape, different words\nprint("Good morning!")\n',
       },
@@ -146,7 +146,7 @@ export const EXERCISES: Exercise[] = [
     section: 'variables',
     concept: 'using a stored value inside a piece of text',
     prompt:
-      'The variable `name` already holds `Ada`. Print `Hello, Ada!` — but take the name from the variable rather than typing it again.',
+      'The variable `name` already holds `Ada`. Print `Hello, Ada!`, but take the name from the variable rather than typing it again.',
     starter: 'name = "Ada"\n\n# Print the greeting here.\n',
     expectedStdout: 'Hello, Ada!',
     hints: [
@@ -174,7 +174,7 @@ export const EXERCISES: Exercise[] = [
       },
       {
         tier: 5,
-        text: 'On line 3 type `print("Hello, " + name + "!")`. Mind the space after the comma — it lives inside the quotes. Type it yourself.',
+        text: 'On line 3 type `print("Hello, " + name + "!")`. Mind the space after the comma. It lives inside the quotes. Type it yourself.',
         targetLine: 3,
         scratch:
           '# Same shape, different problem\ncity = "Paris"\n\nprint("Welcome to " + city + "!")\n',
@@ -204,7 +204,7 @@ export const EXERCISES: Exercise[] = [
       },
       {
         tier: 3,
-        text: 'You can do arithmetic inside the brackets — Python works the value out first and prints the result. There is no need for a third variable to hold it on the way.',
+        text: 'You can do arithmetic inside the brackets. Python works the value out first and prints the result. There is no need for a third variable to hold it on the way.',
         targetLine: 4,
       },
       {
@@ -244,7 +244,7 @@ export const EXERCISES: Exercise[] = [
       },
       {
         tier: 3,
-        text: 'Python multiplies with `*`. It does not use `x` — that would be read as the name of a variable, and there is no variable by that name here.',
+        text: 'Python multiplies with `*`. It does not use `x`, which would be read as the name of a variable, and there is no variable by that name here.',
         targetLine: 4,
       },
       {
@@ -289,7 +289,7 @@ export const EXERCISES: Exercise[] = [
       },
       {
         tier: 4,
-        text: 'Same shape — bracket the sum, then divide it.',
+        text: 'Same shape: bracket the sum, then divide it.',
         targetLine: 5,
         scratch:
           '# Same shape, different problem\np = 2\nq = 4\nr = 9\n\nprint((p + q + r) / 3)\n',
@@ -311,7 +311,7 @@ export const EXERCISES: Exercise[] = [
     title: 'Shout it',
     section: 'strings',
     concept: 'string methods, called with a dot',
-    prompt: '`word` holds `python`. Print it in capitals — `PYTHON`.',
+    prompt: '`word` holds `python`. Print it in capitals: `PYTHON`.',
     starter: 'word = "python"\n\n# Print it in capitals here.\n',
     expectedStdout: 'PYTHON',
     hints: [
@@ -352,13 +352,13 @@ export const EXERCISES: Exercise[] = [
     section: 'strings',
     concept: 'joining pieces of text together',
     prompt:
-      '`first` and `last` are already set. Print `Ada Lovelace` — one line, with a single space between the two.',
+      '`first` and `last` are already set. Print `Ada Lovelace` on one line, with a single space between the two.',
     starter: 'first = "Ada"\nlast = "Lovelace"\n\n# Print the full name here.\n',
     expectedStdout: 'Ada Lovelace',
     hints: [
       {
         tier: 1,
-        text: 'Both halves are stored. The space between them is not — that part is yours to supply.',
+        text: 'Both halves are stored. The space between them is not, so that part is yours to supply.',
         targetLine: null,
       },
       {
@@ -405,7 +405,7 @@ export const EXERCISES: Exercise[] = [
       },
       {
         tier: 2,
-        text: 'Line 3. Two things happen here — measuring, and printing — and one of them sits inside the other.',
+        text: 'Line 3. Two things happen here, measuring and printing, and one of them sits inside the other.',
         targetLine: 3,
       },
       {
@@ -415,7 +415,7 @@ export const EXERCISES: Exercise[] = [
       },
       {
         tier: 4,
-        text: 'Same shape — one built-in feeding its result straight into another.',
+        text: 'Same shape: one built-in feeding its result straight into another.',
         targetLine: 3,
         scratch: '# Same shape, different problem\ncity = "Lisbon"\n\nprint(len(city))\n',
       },
@@ -483,7 +483,7 @@ export const EXERCISES: Exercise[] = [
     hints: [
       {
         tier: 1,
-        text: 'The same shape as the last one, but read the threshold carefully — "sixty or more" has to include sixty itself.',
+        text: 'The same shape as the last one, but read the threshold carefully. "Sixty or more" has to include sixty itself.',
         targetLine: null,
       },
       {
@@ -536,7 +536,7 @@ export const EXERCISES: Exercise[] = [
       },
       {
         tier: 3,
-        text: 'Python checks the branches from the top down and stops at the first one that holds. That is why the middle band only has to rule out its own lower edge — anything higher was already caught by the branch above it.',
+        text: 'Python checks the branches from the top down and stops at the first one that holds. That is why the middle band only has to rule out its own lower edge, because anything higher was already caught by the branch above it.',
         targetLine: 3,
       },
       {
@@ -563,7 +563,7 @@ export const EXERCISES: Exercise[] = [
     title: 'First and last',
     section: 'lists',
     concept: 'picking items out of a list by position',
-    prompt: 'Print the first number in `nums`, then the last — two lines, 3 then 5.',
+    prompt: 'Print the first number in `nums`, then the last. Two lines: 3, then 5.',
     starter: 'nums = [3, 7, 12, 5]\n\n# Print the first, then the last.\n',
     expectedStdout: '3\n5',
     hints: [
@@ -616,7 +616,7 @@ export const EXERCISES: Exercise[] = [
       },
       {
         tier: 2,
-        text: 'Line 3. Measure the list, print the result — one call nested inside the other, exactly as before.',
+        text: 'Line 3. Measure the list, print the result: one call nested inside the other, exactly as before.',
         targetLine: 3,
       },
       {
@@ -655,7 +655,7 @@ export const EXERCISES: Exercise[] = [
     hints: [
       {
         tier: 1,
-        text: 'You need something that repeats — once for each number in the list. Python has one keyword for that.',
+        text: 'You need something that repeats, once for each number in the list. Python has one keyword for that.',
         targetLine: null,
       },
       {
@@ -684,7 +684,7 @@ export const EXERCISES: Exercise[] = [
       },
     ],
     watch: [
-      { id: 'no-loop', note: 'No loop yet — they may not know the keyword.' },
+      { id: 'no-loop', note: 'No loop yet. They may not know the keyword.' },
       {
         id: 'index-value-confusion',
         note: 'Treating the loop variable as a position rather than the value.',
@@ -698,7 +698,7 @@ export const EXERCISES: Exercise[] = [
     section: 'loops',
     concept: 'using the loop variable as the value itself',
     prompt:
-      'Print each number doubled, one per line — 6, 14, 24, 10. The loop is already written.',
+      'Print each number doubled, one per line: 6, 14, 24, 10. The loop is already written.',
     starter: 'nums = [3, 7, 12, 5]\n\nfor n in nums:\n    print(n)\n',
     expectedStdout: '6\n14\n24\n10',
     hints: [
@@ -726,7 +726,7 @@ export const EXERCISES: Exercise[] = [
       },
       {
         tier: 5,
-        text: 'Change line 4 to `print(n * 2)`. Type it in yourself — then run it.',
+        text: 'Change line 4 to `print(n * 2)`. Type it in yourself, then run it.',
         targetLine: 4,
         scratch:
           '# Same shape, different problem\nprices = [10, 20, 30]\n\nfor p in prices:\n    print(p + 5)\n',
@@ -735,7 +735,7 @@ export const EXERCISES: Exercise[] = [
     watch: [
       {
         id: 'index-value-confusion',
-        note: 'Reaching for `nums[n]` — the classic sign they think n is an index.',
+        note: 'Reaching for `nums[n]`, the classic sign they think n is an index.',
       },
       { id: 'loop-body-outside', note: 'Print left outside the loop; only the last value appears.' },
     ],
@@ -763,7 +763,7 @@ export const EXERCISES: Exercise[] = [
       },
       {
         tier: 3,
-        text: 'A variable created inside the loop is created again on every pass — so it gets reset each time. The total has to exist once, before the loop begins.',
+        text: 'A variable created inside the loop is created again on every pass, so it gets reset each time. The total has to exist once, before the loop begins.',
         targetLine: 3,
       },
       {
@@ -784,7 +784,7 @@ export const EXERCISES: Exercise[] = [
     watch: [
       {
         id: 'accumulator-init-inside-loop',
-        note: 'Total reset on every pass. Runs clean, prints the last number — the single most important case here.',
+        note: 'Total reset on every pass. Runs clean, prints the last number. This is the single most important case here.',
       },
       {
         id: 'accumulator-reassigned',
@@ -792,7 +792,7 @@ export const EXERCISES: Exercise[] = [
       },
       {
         id: 'accumulator-printed-inside-loop',
-        note: 'Prints four times instead of once — the print is inside the loop.',
+        note: 'Prints four times instead of once because the print is inside the loop.',
       },
       { id: 'loop-body-outside', note: 'Accumulation left outside the loop.' },
     ],
@@ -816,17 +816,17 @@ export const EXERCISES: Exercise[] = [
       },
       {
         tier: 2,
-        text: 'You need an `if` inside the loop, and the counting line goes inside that `if` — indented one step further.',
+        text: 'You need an `if` inside the loop, and the counting line goes inside that `if`, indented one step further.',
         targetLine: 4,
       },
       {
         tier: 3,
-        text: 'You are counting how many, not adding them up. Each match should push the counter up by one — it should not add the number itself.',
+        text: 'You are counting how many, not adding them up. Each match should push the counter up by one. It should not add the number itself.',
         targetLine: 4,
       },
       {
         tier: 4,
-        text: 'Same shape — counting only the items that match a condition.',
+        text: 'Same shape: counting only the items that match a condition.',
         targetLine: 4,
         scratch:
           '# Same shape, different problem\nwords = ["hi", "hello", "hey", "greetings"]\n\ncount = 0\nfor w in words:\n    if len(w) > 3:\n        count = count + 1\nprint(count)\n',
@@ -850,7 +850,7 @@ export const EXERCISES: Exercise[] = [
       },
       {
         id: 'accumulator-reassigned',
-        note: 'Adding the number rather than 1 — summing when they meant to count.',
+        note: 'Adding the number rather than 1, which is summing when they meant to count.',
       },
     ],
   },
@@ -879,7 +879,7 @@ export const EXERCISES: Exercise[] = [
       },
       {
         tier: 3,
-        text: 'A dictionary pairs each key with a value, and handing it a key gives back that key’s value. The key here is a piece of text, so it needs quotes — without them Python goes looking for a variable of that name.',
+        text: 'A dictionary pairs each key with a value, and handing it a key gives back that key’s value. The key here is a piece of text, so it needs quotes. Without them Python goes looking for a variable of that name.',
         targetLine: 3,
       },
       {
@@ -906,7 +906,7 @@ export const EXERCISES: Exercise[] = [
     section: 'functions',
     concept: 'defining a function that takes a value in and hands one back',
     prompt:
-      'Write a function called `double` that takes one number and gives back twice that number. The last line already calls it — it should print 42.',
+      'Write a function called `double` that takes one number and gives back twice that number. The last line already calls it and should print 42.',
     starter:
       '# Write your function here.\n# It takes one number and gives back twice that number.\n\n\nprint(double(21))\n',
     expectedStdout: '42',
@@ -918,12 +918,12 @@ export const EXERCISES: Exercise[] = [
       },
       {
         tier: 2,
-        text: 'Line 4 defines it, and the line under that — indented — is what it hands back. The call at the bottom stays exactly where it is.',
+        text: 'Line 4 defines it, and the indented line under that is what it hands back. The call at the bottom stays exactly where it is.',
         targetLine: 4,
       },
       {
         tier: 3,
-        text: 'The name in the brackets of the definition is a placeholder: it stands for whatever number is passed in at the moment the function is called. Handing a value back is not the same as printing it — printing shows the value and hands back nothing at all.',
+        text: 'The name in the brackets of the definition is a placeholder: it stands for whatever number is passed in at the moment the function is called. Handing a value back is not the same as printing it. Printing shows the value and hands back nothing at all.',
         targetLine: 4,
       },
       {

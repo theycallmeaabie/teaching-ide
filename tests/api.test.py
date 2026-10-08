@@ -123,7 +123,10 @@ def fresh(**limits) -> None:
 print("--- What the server exposes -----------------------------------------")
 fresh()
 check("health answers", client.get("/api/health").json()["ok"] is True)
-check("the interactive API docs are not published", client.get("/docs").status_code == 404 and client.get("/openapi.json").status_code == 404)
+# What matters is that the API's own docs are not there. /docs may answer with the app
+# itself (an unknown page is the app's to route), which describes nothing.
+docs = [client.get(p).text.lower() for p in ("/docs", "/redoc")]
+check("the interactive API docs are not published", not any("swagger" in t or "redoc" in t for t in docs) and client.get("/openapi.json").status_code == 404)
 r = client.get("/api/health")
 check("responses carry hardening headers", r.headers.get("x-content-type-options") == "nosniff" and r.headers.get("x-frame-options") == "DENY")
 check("an oversized buffer is refused before it reaches the model", client.post("/api/teach", json=body(buffer="x" * 9000)).status_code == 422)
@@ -205,6 +208,15 @@ if (Path(__file__).resolve().parent.parent / "dist" / "index.html").is_file():
     check("the built app is served from the same origin", r.status_code == 200 and "<div id=\"root\">" in r.text)
     check("...and the API still wins over it", client.get("/api/health").headers["content-type"].startswith("application/json"))
     check("an unknown API path is not answered with the app", client.get("/api/nope").status_code == 404)
+    # The pages are routes in the browser and exist nowhere on disk: a refresh, or a
+    # link pasted to someone, has to land on the app and not on a 404.
+    for page in ("/signin", "/courses", "/course/python", "/reset-password"):
+        r = client.get(page)
+        check(f"a refresh on {page} gets the app", r.status_code == 200 and "<div id=\"root\">" in r.text, f"{r.status_code}")
+    # ...but a file that is not there is reported as not there, or a missing script
+    # would be answered with a web page it fails to parse.
+    check("a missing script is a 404, not the app", client.get("/assets/missing.js").status_code == 404)
+    check("...and so is a missing file in a folder", client.get("/pyodide/missing.mjs").status_code == 404)
 else:
     print("SKIP  no dist/ — run `npm run build` to check the single-origin deployment")
 

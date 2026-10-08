@@ -29,8 +29,8 @@ if (import.meta.env.DEV) {
 
 // Mount once the two fonts are in (capped, so a font that fails can never block
 // the app). CodeMirror measures the teacher's bubble on first paint and only
-// waits for fonts that are already loading at that moment — Geist is not, since
-// it is requested lazily — so a webfont arriving afterwards re-wraps the bubble
+// waits for fonts that are already loading at that moment (Geist is not, since
+// it is requested lazily), so a webfont arriving afterwards re-wraps the bubble
 // a line taller than was measured, and every line number below it drifts away
 // from the code it labels.
 const fonts = ['400 15px "Geist Variable"', '400 15px "JetBrains Mono Variable"']

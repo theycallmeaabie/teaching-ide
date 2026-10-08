@@ -15,6 +15,12 @@
  */
 import { createClient } from '@supabase/supabase-js'
 import { readFileSync } from 'node:fs'
+import WebSocket from 'ws'
+
+// supabase-js builds a realtime client whether or not it is used, and it needs a
+// WebSocket that Node only ships natively from version 22. Browsers have one,
+// so the app is unaffected; this script is the only thing that runs in Node.
+const clientOptions = { realtime: { transport: WebSocket } }
 
 const env = Object.fromEntries(
   readFileSync(new URL('../.env', import.meta.url), 'utf8')
@@ -47,7 +53,7 @@ if (!email || !password) {
   process.exit(2)
 }
 
-const db = createClient(URL_, KEY)
+const db = createClient(URL_, KEY, clientOptions)
 
 // ----------------------------------------------------------------- sign in
 let { data: auth, error } = await db.auth.signInWithPassword({ email, password })
@@ -111,10 +117,11 @@ if (sessionId) {
 }
 
 // --------------------------------------------------------------------- RLS
-const anon = createClient(URL_, KEY)
+const anon = createClient(URL_, KEY, clientOptions)
 const leaked = await anon.from('progress').select('*').eq('user_id', userId)
-check('row-level security hides rows from a signed-out reader',
-  (leaked.data ?? []).length === 0, `${(leaked.data ?? []).length} rows visible`)
+check('a signed-out reader cannot see these rows',
+  (leaked.data ?? []).length === 0,
+  leaked.error ? `refused outright (${leaked.error.code ?? 'denied'})` : `${(leaked.data ?? []).length} rows visible, so row-level security is the only thing in the way`)
 
 // ------------------------------------------------------- the API, if it is up
 const token = auth.session.access_token
@@ -136,14 +143,18 @@ if (status == null) {
     body: JSON.stringify({ buffer: '', exercise_id: 'x', exercise_prompt: '', expected_stdout: '', tier: 1, doc_version: 1 }),
   })
   check('the API accepts a real Supabase token', withTok.status !== 401, `status ${withTok.status}`)
-  const withBad = await fetch('http://127.0.0.1:8000/api/teach', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer not.a.real.jwt' },
-    body: JSON.stringify({ buffer: '', exercise_id: 'x', exercise_prompt: '', expected_stdout: '', tier: 1, doc_version: 1 }),
-  })
-  const secretSet = withBad.status === 401
-  check('a forged token is rejected (needs SUPABASE_JWT_SECRET)', secretSet,
-    secretSet ? 'rejected' : `status ${withBad.status} — SUPABASE_JWT_SECRET is probably unset`)
+  const health = await fetch('http://127.0.0.1:8000/api/health').then((r) => r.json()).catch(() => ({}))
+  if (health.verifies_tokens === false || health.verifies_tokens === undefined) {
+    // Off by default, and a legitimate choice: every call is then anonymous. Not a failure.
+    console.log('NOTE  the API is not verifying tokens (SUPABASE_JWT_SECRET is empty), so every call is treated as anonymous')
+  } else {
+    const withBad = await fetch('http://127.0.0.1:8000/api/teach', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer not.a.real.jwt' },
+      body: JSON.stringify({ buffer: '', exercise_id: 'x', exercise_prompt: '', expected_stdout: '', tier: 1, doc_version: 1 }),
+    })
+    check('a forged token is rejected', withBad.status === 401, `status ${withBad.status}`)
+  }
 }
 
 // ------------------------------------------------------------------- tidy up

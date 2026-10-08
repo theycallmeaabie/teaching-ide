@@ -187,10 +187,49 @@ export async function saveProgress(exerciseIndex: number): Promise<void> {
   }
   rows.set(exercise.id, row)
 
+  await persist(exercise.id)
+}
+
+/** Writes in progress, by exercise, and whether another was asked for meanwhile. */
+const writing = new Map<string, Promise<void>>()
+const wantedAgain = new Set<string>()
+
+/**
+ * Writes the freshest copy of one exercise's row, one write at a time.
+ *
+ * Saves are asked for in quick succession (solving, then the teacher's reply,
+ * then the learner's next question), and over a real network separate requests
+ * do not land in the order they were sent. An older save arriving last would
+ * silently replace the newer one: the conversation vanishes while the "solved"
+ * tick, identical in both, hides it. So there is never more than one write in
+ * flight per exercise, and a request made meanwhile only means "write once more
+ * afterwards, with whatever is newest by then".
+ */
+async function persist(exerciseId: string): Promise<void> {
+  if (writing.has(exerciseId)) {
+    wantedAgain.add(exerciseId)
+    return writing.get(exerciseId)
+  }
+  const run = (async () => {
+    do {
+      wantedAgain.delete(exerciseId)
+      await writeRow(exerciseId)
+    } while (wantedAgain.has(exerciseId))
+  })()
+  writing.set(exerciseId, run)
+  try {
+    await run
+  } finally {
+    writing.delete(exerciseId)
+  }
+}
+
+async function writeRow(exerciseId: string): Promise<void> {
+  const row = rows.get(exerciseId)
   const userId = await currentUserId()
   // Never write before the read has come back: an empty store would overwrite
   // real rows with blanks.
-  if (!supabase || !userId || !useStore.getState().progressLoaded) return
+  if (!row || !supabase || !userId || !useStore.getState().progressLoaded) return
 
   const { error } = await supabase
     .from('progress')

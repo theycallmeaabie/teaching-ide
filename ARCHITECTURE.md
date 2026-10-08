@@ -1,500 +1,427 @@
 # Architecture
 
-The Teaching IDE is a browser Python editor with an embedded teacher that speaks
-only when the learner appears stuck. This document describes how the system is
-built: the processes, the modules, the contracts between them, and the data
-that flows across those boundaries. For the *why* behind the design choices and
-the concepts involved, see [EXPLAINER.md](EXPLAINER.md).
+Teaching IDE is a browser Python editor with a teacher inside it. Twenty small
+exercises take a complete beginner from `print` to functions. An **observer**
+watches how the learner works and decides *when* the teacher may speak; a
+**teacher** (a language model behind a set of guards) decides *what* to say.
+
+This document describes how the system is built: the processes, the modules,
+the contracts between them, and what happens when something fails. For the
+reasoning behind the design see [EXPLAINER.md](EXPLAINER.md); for setup and
+deployment see [README.md](README.md); for how to measure whether the teacher
+speaks at the right moments see [docs/EVALUATION.md](docs/EVALUATION.md).
 
 ---
 
-## 1. System overview
+## 1. Principles
 
-Three runtimes cooperate. Two live in the browser tab, one is a local server.
+These explain most of the decisions below.
+
+1. **The lesson never stalls.** Every failure path ends in either a hand-written
+   hint or deliberate silence with a recorded reason. A slow, dead,
+   rate-limited or wrong model must not leave a learner staring at nothing.
+2. **Teaching is free; the answer is not.** The teacher may explain any idea. It
+   may not hand over the solution to the exercise in front of the learner, and
+   that is enforced in code, not only requested in a prompt.
+3. **When to speak and what to say are separate problems.** The observer is
+   deterministic and tunable. The teacher is probabilistic and guarded. Neither
+   can bypass the other.
+4. **Learner code never touches the server.** Python runs in the learner's own
+   browser tab, in a disposable worker.
+5. **Everything optional is optional.** With no Supabase project there are no
+   accounts. With no model key there are only hand-written hints. With the API
+   down the editor, the observer and the whole hint ladder still work.
+6. **The model proposes, the server disposes.** Whatever the model returns is
+   validated, clamped to the ladder position the client chose, and checked for
+   leaks before anyone sees it.
+
+---
+
+## 2. System overview
 
 ```
-┌────────────────────────────────────────────────────────────────────────────┐
-│  BROWSER — main thread (React + CodeMirror + Zustand)                      │
-│                                                                            │
-│   keystrokes  ┌──────────┐  edit batches  ┌──────────┐  tick / 250 ms      │
-│  ────────────►│CodeMirror│───────────────►│ observer │───────────────┐     │
-│               │  editor  │◄───────────────│          │               │     │
-│               └────┬─────┘  speech widget └────┬─────┘               ▼     │
-│                    │ Run                       │ astSnapshot    ┌─────────┐│
-│                    ▼                           │ diagnose       │  gate   ││
-│               ┌──────────┐                     │                └────┬────┘│
-│               │  runner  │◄────────────────────┘                     │fire │
-│               └────┬─────┘                                           ▼     │
-│                    │ Comlink RPC                                ┌─────────┐│
-│                    │                                            │ teacher ││
-│                    │                                            │ bridge  ││
-│                    │                                            └────┬────┘│
-└────────────────────┼─────────────────────────────────────────────────┼─────┘
-                     ▼                                                 │ SSE
-       ┌──────────────────────────┐                                    ▼
-       │  WEB WORKER — Pyodide    │                     ┌───────────────────────┐
-       │  (CPython in WebAssembly)│                     │  FASTAPI  :8000       │
-       │                          │                     │  /api/teach           │
-       │  _teaching_ide_run       │                     │  cache → llm → guard  │
-       │  _teaching_ide_ast       │                     │  /api/translate-error │
-       │  _teaching_ide_diagnose  │                     │  /api/health          │
-       └──────────────────────────┘                     └───────────┬───────────┘
-                                                                    │ OpenAI-compatible
-                                                                    ▼
-                                                          Groq / Ollama / Gemini
+┌────────────────────────────────── BROWSER ───────────────────────────────────┐
+│  main thread: React 18 + Zustand + CodeMirror 6                                │
+│                                                                                │
+│   keystrokes   ┌────────┐ edit batches ┌──────────┐  250 ms tick  ┌──────┐     │
+│  ────────────► │ editor │ ───────────► │ observer │ ────────────► │ gate │     │
+│                └───┬────┘              └────┬─────┘               └──┬───┘     │
+│        speech      │ Run                    │ AST snapshots          │ fires   │
+│        widget ◄────┼────────────────────────┼────────────────────────┤         │
+│                    ▼                        │                        ▼         │
+│              ┌──────────┐ Comlink RPC       │                  ┌──────────┐    │
+│              │  runner  │ ◄─────────────────┘                  │  bridge  │    │
+│              └────┬─────┘                                      └────┬─────┘    │
+│                   │                                                 │          │
+│   auth + data (Supabase client, optional)   voice (MediaRecorder)   │          │
+└───────────────────┼─────────────────────────────────────────────────┼──────────┘
+                    ▼                                                 │ SSE
+   ┌────────────────────────────┐                                     ▼
+   │ WEB WORKER: Pyodide        │       ┌────────────────────────────────────────┐
+   │ (CPython compiled to WASM) │       │ FASTAPI, one process, port 8000        │
+   │  _teaching_ide_run         │       │  POST /api/teach           (SSE)       │
+   │  _teaching_ide_ast         │       │  POST /api/translate-error             │
+   │  _teaching_ide_diagnose    │       │  POST /api/transcribe      (voice)     │
+   └────────────────────────────┘       │  POST /api/check-ladder                │
+                                        │  GET  /api/health                      │
+   ┌────────────────────────────┐       │  serves the built app (dist/)          │
+   │ SUPABASE (optional)        │       └───────────────────┬────────────────────┘
+   │  Auth, Postgres            │                           │ OpenAI-compatible
+   │  progress, sessions (RLS)  │                           ▼
+   └────────────────────────────┘          Groq (chat + Whisper) / Ollama / Gemini
 ```
 
-**Main thread** owns the UI, the observer (stuck detection) and all lesson
-state. It never runs learner code.
+**Main thread** owns the UI, the observer and all lesson state. It never runs
+learner code.
 
 **Web Worker** hosts Pyodide. It is the only place learner Python executes, and
-it is disposable: `Stop` terminates it and boots a fresh one.
+it is disposable: Stop terminates it and boots a fresh one.
 
-**FastAPI server** is the teacher's voice. It turns a context snapshot into one
-tool call from an LLM, validates it, and streams it back. Everything else works
-with this server down.
+**FastAPI** is the teacher's voice. It turns a context snapshot into one tool
+call from a model, validates it and streams it back. It also serves the built
+app, so a deployment is one process on one origin.
+
+**Supabase** is optional. The browser talks to it directly for sign-in, saved
+progress and session logs; the server only verifies the token it issues.
 
 ---
 
-## 2. Repository layout
+## 3. Repository layout
 
 ```
 src/
-  main.tsx              entry; exposes dev handles on window in DEV
-  App.tsx               wires runner ↔ observer ↔ teacher ↔ editor; Run/Stop
-  store.ts              Zustand store — the only React-visible mutable state
-  types.ts              RunResult, AstSnapshot, Misconception
-  exec/                 Python execution
-    runner.ts             PythonRunner singleton: spawn / run / stop / restart
-    pyodide.worker.ts     worker body; Comlink-exposed API
+  exec/                 learner code, in a worker
+    pyodide.worker.ts     boots Pyodide, captures output, exposes 4 RPC methods
+    runner.ts             main-thread singleton: run / stop / restart / snapshot
     harness.ts            three Python programs shipped into the worker at boot
   observer/             stuck detection
     observer.ts           module state, edit batching, 250 ms tick, snapshot
-    score.ts              pure: events → {score, contributions}
-    gate.ts               pure: score + cooldown + budget → verdict
-    semantics.ts          AST baseline; cosmetic / rename / changed
+    score.ts              pure: events -> {score, contributions}
+    gate.ts               pure: score + cooldown + budget -> verdict
+    semantics.ts          AST baseline; cosmetic / rename / changed; "has started"
     log.ts                event log (module-level array) + JSON export
-    config.ts             every weight/threshold, live-tunable
+    config.ts             every weight and threshold, live-tunable
     annotations.ts        CodeMirror annotation marking app-driven edits
     types.ts              Event union, Contribution, SemanticVerdict
   lesson/               content and progression
-    exercises.ts          20 exercises × 5 hint tiers; isCorrect(); indexOfExercise()
-    teaching.ts           submitRun, askTeacherQuestion, goToExercise
-    profile.ts            pure: per-exercise stats → who this learner has been so far
+    exercises.ts          20 exercises x 5 hint tiers; isCorrect(); indexOfExercise()
+    courses.ts            the course page's catalogue: Python, and the ones to come
+    teaching.ts           submitRun, askTeacherQuestion, goToExercise, resumeCourse, leaveLesson
+    profile.ts            pure: per-exercise stats -> who this learner has been
   teacher/              talking to the server
-    bridge.ts             requestTeaching: assemble context, stream, apply, fall back
+    bridge.ts             requestTeaching: assemble, stream, validate, apply, fall back
     client.ts             fetch + hand-rolled SSE parser; translateError
-    escalation.ts         pure: did the last hint land? (unchanged code → climb a rung)
-    health.ts             /api/health → degraded flag for the top bar
-  auth/                 Supabase client; sign-in lifecycle; resetting for the next learner
-  data/                 progress.ts (per-exercise row: ladder, conversation, mistakes),
-                        sessions.ts (the observer's event log, written server-side)
-  editor/
-    Editor.tsx            CodeMirror 6 mount; doc swap on exercise change
-    teacherWidget.ts      StateField + block widget that renders speech in-editor
-  ui/                   LessonBar, OutputPane, AskBox, Conversation, ScratchPane, DevPanel, AuthBar
+    escalation.ts         pure: did the last hint land? (unchanged code -> climb)
+    plain.ts              pure: takes the long dash out of teacher text
+    health.ts             /api/health -> degraded flag for the top bar
+  auth/                 supabase.ts (client, null if unconfigured), session.ts (lifecycle,
+                        sign-in/up, password reset), access.ts (who may see a page),
+                        guest.ts ("Continue as guest", per tab)
+  pages/                one file per route: SignInPage, ResetPasswordPage, CoursesPage, CoursePage
+  data/                 progress.ts (per-exercise rows), sessions.ts (event-log recording)
+  editor/               Editor.tsx, teacherWidget.ts (speech inside the editor), theme.ts
+  ui/                   App chrome and panels
+    TopBar (brand, breadcrumb, theme, who is here), Splash, useTitle
+    LessonBar, OutputPane, ScratchPane, AskBox, Conversation, AuthBar, DevPanel
+    Splitter, useLayout   draggable panes, sizes remembered
+    ThemeToggle, theme, prefs   light/dark, per-viewer preferences
+    useVoice              microphone capture and transcription
+    icons                 inline SVG icons (no third-party font or request)
+  store.ts              Zustand store: low-frequency lesson state
+  App.tsx, main.tsx     the router (wouter), the access guard, and boot
 
 server/
-  main.py               FastAPI app; the four endpoints
-  models.py             pydantic request/response shapes
-  llm.py                the only provider-aware module (AsyncOpenAI)
+  main.py               app, /api/teach, sanitise(), replay(), static serving (with
+                        the single-page fallback), headers
+  models.py             pydantic request/response shapes, with size bounds
   prompts.py            SYSTEM prompt + build_context()
-  tools.py              the six tool schemas (give_hint, explain, ask_question, …)
-  leakguard.py          answer-leak detection derived from tier-5 text; instructions at rungs 1–2
+  tools.py              the six tool schemas
+  llm.py                the only provider-aware module; retry; streaming; transcribe()
+  leakguard.py          answer-leak detection; instruction detection
   quota.py              per-caller rate limits; per-sitting interruption budget
+  stt.py                POST /api/transcribe with its own limits
+  errors.py             16-rule dictionary: Python error -> plain English
+  cache.py              sha256(model + system + context) -> server/.cache/*.json
   auth.py               Supabase JWT verification (anonymous when unconfigured)
-  errors.py             regex → plain-English error dictionary
-  cache.py              sha256(context) → server/.cache/*.json
-  validate_tools.py     30-call tool-calling reliability gate + behaviour probes
+  validate_tools.py     30-call tool-calling reliability check
 
-scripts/copy-pyodide.mjs   copies the Pyodide runtime into public/pyodide
-tests/                     unit (Node + Pyodide) and browser (Puppeteer) suites
+supabase/schema.sql     progress + sessions, both row-level secured
+scripts/                copy-pyodide.mjs, verify-supabase.mjs
+tests/                  unit (Node + Python) and browser (Puppeteer) suites
+docs/EVALUATION.md      how to judge whether the teacher speaks at the right moments
+Dockerfile              one image, one process
 ```
 
 ---
 
-## 3. The execution layer (`src/exec/`)
+## 4. The execution layer (`src/exec/`)
 
-### 3.1 Threading model
-
-Learner code is synchronous Python. Inside the worker, `while True:` blocks the
-worker thread forever; nothing on that thread can interrupt it. The only escape
-is `Worker.terminate()` from the main thread. The runner is built around this:
+### 4.1 Threading model
 
 ```
-                 spawn()
-  booting ─────────────────► idle ──run()──► running ──resolve──► idle
-     │                        ▲                 │
-     │ boot fails             │ spawn()         │ stop(): terminate()
-     ▼                        │                 ▼
-   failed                 restarting ◄──────────┘
+main thread                          worker
+-----------                          ------
+runner.run(src)  --Comlink RPC-->    _teaching_ide_run(src)
+                                       compile, exec in a fresh namespace
+                 <-- RunResult ----    capture stdout/stderr
+runner.stop()    --terminate()-->    (gone)
+                 spawn() again  -->  boots a new Pyodide
 ```
 
-`PythonRunner` (`src/exec/runner.ts`) holds one `Worker` and one Comlink proxy.
-`run()` keeps a single pending deferred; `stop()` resolves it with a synthetic
-`Stopped` error, terminates the worker, and immediately spawns a replacement so
-the learner is never left without an interpreter.
+- Pyodide is loaded from `/pyodide/` at **runtime** (an `import()` the bundler
+  cannot see), then the three harnesses are executed in order.
+- `Stop` is a hard `worker.terminate()` plus a transparent respawn. There is no
+  interrupt buffer. The pending run resolves with a synthetic `Stopped` result.
+- Output is capped at 200,000 characters so `while True: print(x)` cannot take
+  the worker down before Stop is pressed. `input()` raises `EOFError` rather
+  than hanging, and the error dictionary explains it.
+- A run taking over 3 seconds shows a slow-run banner with a Stop button.
+- Runner states: `booting | idle | running | restarting | failed`.
 
-### 3.2 Worker API (Comlink)
+### 4.2 The three harnesses (`harness.ts`)
 
-`src/exec/pyodide.worker.ts` exposes four methods:
-
-| Method | Returns | Notes |
+| Function | Returns | Used for |
 |---|---|---|
-| `ready()` | `Promise<void>` | memoised boot: loads `/pyodide/pyodide.mjs`, installs stdout/stderr/stdin hooks, runs the three harnesses |
-| `run(source)` | `RunResult` | fresh namespace per run; stdout capped at 200 000 chars |
-| `astSnapshot(source)` | `AstSnapshot` | ~1 ms; **never called while a run is in flight** (the runner refuses and returns `null`) |
-| `diagnose(source)` | `Misconception[]` | same caveat |
+| `_teaching_ide_run(src)` | `{ok, type, message, line}` | Running the learner's code. A fresh namespace per run. `compile()` first, so a `SyntaxError` is distinguished from a runtime error. The reported line is the **last frame inside the learner's file**, never a harness frame. |
+| `_teaching_ide_ast(src)` | `{parses, dump, shape}` | The observer. `dump` is `ast.dump`; `shape` is the same tree with learner identifiers renamed `v0, v1, ...` (builtins kept), so equal shape with a different dump means a pure rename. |
+| `_teaching_ide_diagnose(src)` | `[{id, line}]` | Spotting beginner misconceptions from the AST (section 6.4). |
 
-Pyodide is loaded by runtime URL (`new URL('/pyodide/pyodide.mjs', origin)`)
-with `/* @vite-ignore */`, and excluded from Vite's dependency pre-bundler in
-`vite.config.ts`. The runtime files are copied from `node_modules` into
-`public/pyodide/` by the `predev`/`prebuild` hook so the JS glue and the `.wasm`
-always match.
+`astSnapshot()` and `diagnose()` return `null` while a run is pending, because
+learner code owns the worker thread and would never yield.
 
-### 3.3 The harnesses (`src/exec/harness.ts`)
-
-Three Python source strings executed once at boot, each defining one global
-function that returns JSON:
-
-- **`_teaching_ide_run(src)`** — `compile()` then `exec()` in
-  `{'__name__': '__main__'}`. Distinguishes compile-time `SyntaxError` from
-  runtime exceptions. Walks the traceback and reports the line number from the
-  **deepest frame whose filename is `<learner>`**, so harness frames never leak
-  into what the learner sees.
-- **`_teaching_ide_ast(src)`** — returns `{parses, dump, shape}`. `dump` is
-  `ast.dump(tree)`; `shape` is the same dump after a `NodeTransformer` renames
-  every non-builtin identifier to `v0, v1, …` in order of first appearance.
-- **`_teaching_ide_diagnose(src)`** — walks the AST for seven known beginner
-  patterns and returns `[{id, line}]`. See §5.3.
-
-### 3.4 Contract: `RunResult`
+### 4.3 Contract: `RunResult`
 
 ```ts
-{ ok: boolean; stdout: string;
-  error?: { type: string; message: string; line: number | null };
-  durationMs: number }
+{ ok: boolean, stdout: string, durationMs: number,
+  error?: { type: string, message: string, line: number | null } }
 ```
 
-Never raw text. `type` is the Python exception class name, which is what the
-error dictionary keys on.
+Line numbers refer to the learner's own buffer, so a hint can say "line 3" and
+be right.
 
 ---
 
-## 4. The observer (`src/observer/`)
+## 5. The observer (`src/observer/`)
 
-The observer converts a stream of editor transactions into a single number in
-`[0, 1]` — the stuck score — and decides, via a gate, when the teacher may
-speak. It runs entirely on the main thread and never touches React state
-except through a snapshot consumed by `useSyncExternalStore`.
+The observer answers one question every 250 ms: **is this learner stuck, or
+thinking?** It never speaks. It produces a number and a verdict.
 
-### 4.1 Data flow
+### 5.1 Data flow
 
 ```
 CodeMirror transaction
-   │  (ignored if annotated programmaticEdit)
+   │  (ignored if annotated programmaticEdit: an exercise swap is not behaviour)
    ▼
-editorExtension()  ──── accumulate {lines touched, charDelta} ────┐
-   │                                                              │ 700 ms pause
-   ▼                                                              ▼
-docVersion++, markActivity()                                 flushBatch(doc)
-                                                                  │
-                     ┌────────────────────────────────────────────┼─────────────┐
-                     ▼                                            ▼             ▼
-            log.append({type:'edit', semantic:'pending'})  hash(doc) vs     classify(doc)
-                                                           docHistory           │ async
-                                                           → revertedAt         ▼
-                                                                        runner.astSnapshot
-                                                                                │
-                                                                                ▼
-                                                              event.semantic = verdict
-                                                              cosmeticStreak updated
-
-every 250 ms: tick()
-   │
-   ├── log idle milestones (5 s, 15 s, 30 s, 60 s, 120 s, 180 s)
-   ├── computeScore({now, config, events, lastActivityAt, lastEditAt,
-   │                 learnerChars, cosmeticStreak, revertedAt})
-   ├── evaluateGate(now, score, idleMs, gateState, config)
-   ├── if allowed → log {type:'gate'}, start cooldown, onIntervene(v)
-   └── publish ObserverSnapshot → subscribers (DevPanel)
+edit batch (closed by a 700 ms typing pause)   lines touched, net char delta
+   ▼
+flushBatch ──► log.append(edit)
+   │            ├─ hash the buffer: has it returned to a state seen in the last 30 s?
+   │            └─ classify(doc) via the worker's AST ──► changed | cosmetic | rename | unparseable
+   ▼
+tick (250 ms): computeScore(events, ...) ──► evaluateGate(...) ──► intervene handler
 ```
 
-### 4.2 Module responsibilities
+Batching matters: "the same line edited four times" must mean four separate
+visits, not four characters typed on it.
 
-| Module | Kind | Responsibility |
+### 5.2 The stuck score
+
+A number in [0, 1], **recomputed from scratch every tick** from the event log
+(not a decaying accumulator), so every contributing term stays individually
+inspectable in the dev panel. Defaults:
+
+| Signal | Fires when | Weight |
 |---|---|---|
-| `observer.ts` | stateful | owns all mutable observer state; the only module with timers; exposes `editorExtension()`, `recordRun()`, `recordAsk()`, `setStarter()`, `noteTeacherSpoke()`, `getSnapshot()` |
-| `score.ts` | pure | `computeScore(input) → {score, contributions}` — recomputed from scratch each tick |
-| `gate.ts` | pure | `evaluateGate(...) → GateVerdict` with `blockedBy[]` reasons |
-| `semantics.ts` | stateful | AST baseline + generation counter; `seed()`, `classify()` |
-| `log.ts` | stateful | append-only `Event[]`; `exportJson()` |
-| `config.ts` | stateful | `config` object mutated in place by the dev panel; `CONFIG_FIELDS` drives the sliders |
+| Idle after error | A run failed and nothing has been edited since. Ramps 4 s to 40 s, never windowed. | +0.70 |
+| Idle after wrong answer | The run was clean but the output wrong. Same ramp. | +0.70 |
+| Empty-buffer silence | They have not started: no program of their own yet. Ramps 25 s to 75 s. | +0.65 |
+| Thrash: same line | One line touched 4 or more times in 30 s | +0.30 |
+| No real change | Edits that leave the AST alone (comments, whitespace, renames count half) | +0.30 |
+| Thrash: made and undone | The buffer hashed back to a recent state | +0.20 |
+| Thrash: same error again | Consecutive runs fail with the same type on the same line | +0.15 |
+| Solved it | A correct run in the last 60 s, decaying | -0.80 |
+| Typing forward | 20 or more net characters in 15 s | -0.30 |
+| Program changed | A `changed` edit in the last 60 s, decaying | -0.25 |
 
-The pure modules are what the unit tests target (`tests/observer.test.ts`).
+Two subtleties:
 
-### 4.3 The event log
+- **"Empty" is structural, not a character count.** A finished, correct answer to
+  "Add two numbers" is 12 characters. `semantics.hasStarted()` compares the
+  buffer's AST to the starter's, so comments and blank lines do not count as
+  starting and any real statement does, at any length. The character count is
+  only the fallback for a buffer that will not parse.
+- **Unparseable is neutral.** Beginners' code fails to parse most of the time, so
+  it leaves the non-progress streak untouched and does not replace the baseline.
 
-A plain module-level array, deliberately outside the Zustand store so that
-appending on every edit batch does not trigger React renders. Event types:
+### 5.3 The gate
 
-```ts
-| { t, type:'edit', linesChanged:number[], charDelta:number, semantic?:SemanticVerdict }
-| { t, type:'run',  result:RunResult, correct:boolean }
-| { t, type:'idle', durationMs:number }
-| { t, type:'ask',  text:string }
-| { t, type:'gate', trigger:'score'|'hardIdle', score:number, reason:string }
-```
+The score alone does not let the teacher speak. `evaluateGate` requires all of:
 
-`exportJson(config)` produces the session evidence: every event with an
-`offsetMs` from session start, plus the config that was live at export.
+- score above **0.6**, *or* **180 s** of total silence (the only bypass of the score);
+- **45 s** since the teacher last spoke or the gate last fired;
+- budget left: **8** interruptions per session.
 
-### 4.4 Gate state
+When the gate fires, the cooldown starts immediately so it cannot re-fire while
+a request is in flight, but the budget is only charged if the teacher actually
+spoke. If the model chooses `stay_silent`, nothing was interrupted and nothing is
+charged. A question the learner asks themselves skips the gate, resets the
+cooldown and costs nothing.
 
-```ts
-{ lastInterventionAt: number | null; used: number }
-```
+### 5.4 Event log and configuration
 
-- The gate firing sets `lastInterventionAt` (cooldown starts) but does **not**
-  increment `used`. Budget is only spent if the teacher actually speaks
-  (`noteTeacherSpoke(consumesBudget)`), and only for gate-triggered speech.
-- `recordAsk()` clears `lastInterventionAt` — a learner question resets the
-  cooldown and never costs budget.
+- `log.ts` is a plain module-level array (deliberately outside React state so log
+  growth never causes a render). Five event types: `edit`, `run`, `idle`, `ask`,
+  `gate`. `exportJson` writes every event with a millisecond offset plus the
+  configuration in force.
+- `config.ts` holds 27 tunables, all live-editable from the dev panel. Tuning
+  the observer is the main empirical work of the project.
 
 ---
 
-## 5. The lesson layer (`src/lesson/`)
+## 6. The lesson layer (`src/lesson/`)
 
-### 5.1 Content shape
+### 6.1 Content
 
-```ts
-Exercise {
-  id, title, prompt
-  starter: string          // pre-seeded buffer; the learner never types the list
-  expectedStdout: string   // compared after whitespace normalisation
-  hints: HintTier[5]       // { tier, text, targetLine, scratch? }
-  watch: { id: MisconceptionId, note: string }[]
-}
-```
+Twenty exercises in eight sections, each with five hand-written hint rungs and a
+`concept` (the topic, never the mechanics, because it goes into the prompt):
 
-Twenty exercises in a basics ramp — output, variables, arithmetic, strings,
-conditionals, lists, `for` over a list → accumulator, dictionaries, functions.
-A detector firing outside an exercise's `watch` list is filtered out rather than
-reported: `no-loop` is true of every exercise before the loops section. Tiers 4
-and 5 carry a `scratch` program — a worked example of the *same shape on a
-different problem* — shown read-only in a third pane.
-
-### 5.2 Progression state machine
-
-Owned by `teaching.ts`, stored in Zustand:
-
-```
-submitRun(result, source)
-  correct = result.ok && isCorrect(stdout, exercise)
-  observer.recordRun(result, correct)            // synchronous, before anything else
-  result.error ? explainError(error) : clear errorPlain
-  misconceptions = runner.diagnose(source)
-  if correct:
-      solved[i] = true; speech = null
-      requestTeaching('success')
-  else:
-      attempts++
-      tier = hintsGiven > 0 ? min(5, tier + 1) : tier   // ladder only climbs once a hint was given
-```
-
-```
-askTeacherQuestion(text)
-  observer.recordAsk(text)                        // resets cooldown, free
-  if isAskingForAnswer(text): askedForAnswer++
-      every 3rd → tier = min(5, tier + 1)
-  recent.push({learner, text}) (keep 6)
-  requestTeaching('ask', text)
-```
-
-`goToExercise(i)` resets attempts/tier/hintsGiven/speech/misconceptions/recent
-and re-seeds the observer's starter and AST baseline.
-
-### 5.3 Misconception detectors
-
-Run in the worker on every failed run. Each is an AST shape, not an error type,
-because several of them run clean:
-
-| id | Shape |
+| Section | Exercises |
 |---|---|
-| `no-loop` | no `For` node anywhere |
-| `index-value-confusion` | `for x in nums:` and `nums[x]` inside the body (only when iterating a bare name; `range(len(nums))` is legitimate) |
-| `range-off-by-one` | `range(...)` argument contains `+`/`-`, or starts at `1` with two args |
-| `accumulator-init-inside-loop` | a name is assigned a constant **and** accumulated, both inside the loop body |
-| `accumulator-reassigned` | initialised to a constant before the loop, then plainly reassigned inside it, never accumulated |
-| `accumulator-printed-inside-loop` | `print(...)` inside the loop referencing an accumulator but not the loop variable |
-| `loop-body-outside` | a top-level statement after the loop references the loop variable |
+| output | say-hello, two-lines |
+| variables | greet-by-name, add-two, rectangle-area, average-three |
+| strings | shout-it, full-name, how-long |
+| conditionals | is-it-big, pass-or-fail, grade-it |
+| lists | first-and-last, how-many |
+| loops | print-each, print-doubled, sum-them, count-above-ten |
+| dicts | lookup-price |
+| functions | make-a-function |
 
-The exercise's `watch` list maps detected ids to prose notes; only those notes
-are sent to the teacher.
+The rungs: **1** a nudge, **2** the line, **3** the concept, **4** a worked
+example (in a read-only example pane, on a different problem), **5** a
+walk-through that still ends with the learner typing it. Correctness is an exact
+stdout match after trimming trailing whitespace. Exercises are addressed by `id`,
+never by position, so the ramp can grow without repointing saved progress.
 
----
+### 6.2 Progression (`teaching.ts`)
 
-## 6. The teacher — client side (`src/teacher/`)
+- **Tier belongs to the client.** It climbs by one when a run fails *after a hint
+  has been given*, and by one on every third "just tell me". It is capped at 5.
+- A run that exits cleanly with the wrong output counts as a failed attempt
+  (ran without raising is not the same as solved). This is the accumulator
+  lesson in one rule.
+- `submitRun` re-reads the store after its `await`, and drops the result if the
+  learner moved to another exercise meanwhile.
+- `goToExercise` saves where they got to, cancels any in-flight teacher request,
+  and restores everything remembered about the exercise they are entering.
 
-### 6.1 `requestTeaching(trigger, question?)`
+### 6.3 The learner profile (`profile.ts`)
 
-The single entry point. `trigger ∈ {'gate', 'ask', 'success'}`.
+Pure function from per-exercise stats to the few lines the teacher is given:
 
-```
-1. abort any in-flight request
-2. snapshot: buffer = observer.doc(), version = observer.version(), tier, solvedBefore
-3. notes = exercise.watch ∩ store.misconceptions → note strings
-4. POST /api/teach with TeachRequestBody (see §8.1), streaming:
-     'tool'  → open a Speech {kind, tier, text:'', streaming:true} in the store
-               and start the paced reveal
-     'delta' → append to revealTarget
-     'done'  → decision
-5. refresh /api/health
-6. apply:
-     decision == null       → fallbackToPrewritten (network died)
-     tool == stay_silent    → speech = null, lastSilence = reason
-     materiallyChanged(buffer, observer.doc(), targetLine)
-       or solved-meanwhile  → discard, lastSilence = "buffer moved on (vN → vM)"
-     otherwise              → finalize speech (targetLine, source, followup),
-                              push to recent (keep 6), hintsGiven++,
-                              observer.noteTeacherSpoke(trigger === 'gate')
-```
-
-### 6.2 Reveal pacing
-
-Tool-call arguments arrive from the provider in one or two chunks, so true
-streaming would land as a wall of text. `bridge.ts` reveals 4 characters every
-12 ms from `revealTarget`, patching `speech.text` in the store. The widget's
-`updateDOM` patches the existing node rather than recreating it.
-
-### 6.3 Staleness
-
-Every request carries `doc_version`. After the response, `materiallyChanged()`
-compares the buffer the request was built from against the current buffer:
-the target line changed, more than 12 characters net, or a different number of
-non-blank lines → the answer is dropped. A tutor explaining a bug that has
-already been fixed costs more trust than a missed hint.
-
-### 6.4 Fallback
-
-`fallbackToPrewritten()` delivers `exercise.hints[tier - 1]` verbatim with
-`source: 'prewritten'`, choosing `targetLine` from the first detected
-misconception with a line, else the hint's own. It is reached from: network
-failure, and (server-side) any provider exception, unusable tool call, or leak.
-
-### 6.5 SSE client
-
-`client.ts` reads `res.body` as a `ReadableStream`, splits on blank lines,
-parses `event:`/`data:` pairs, and dispatches to handlers. No EventSource — the
-request is a POST with a JSON body.
-
----
-
-## 7. Editor integration (`src/editor/`)
-
-`Editor.tsx` mounts CodeMirror 6 once per component lifetime. Extensions are
-fixed at mount (remounting would destroy the learner's buffer). Exercise
-switches dispatch a whole-document replacement tagged with the
-`programmaticEdit` annotation so the observer ignores it.
-
-`teacherWidget.ts` is a `StateField<Speech | null>` updated by
-`setSpeechEffect`, plus a decoration computed from the field and the doc:
-
-- a `Decoration.line({class:'cm-target-line'})` on the target line (amber, not
-  red — half of these are not errors), and
-- a `Decoration.widget({block:true, side:1})` after that line (or after the
-  last line when no target) containing the speech DOM.
-
-`App.tsx` bridges the two worlds: a `useEffect` on `store.speech` dispatches
-`setSpeechEffect.of(speech)` into the view.
-
----
-
-## 8. The server (`server/`)
-
-### 8.1 `POST /api/teach` — the one streaming endpoint
-
-Request (`models.TeachRequest`):
-
-```
-doc_version, buffer, exercise_id, exercise_prompt, expected_stdout,
-exercise_concept, exercise_section,
-tier (1–5), tier_texts[5], attempts,
-last_run {ok, stdout, error?, correct} | null,
-misconceptions[], misconception_notes[],
-asked_for_answer, idle_ms, last_edit_ms_ago, stuck_score,
-trigger ('gate'|'ask'|'success'), learner_question,
-recent[≤40]   (the conversation on this exercise; the prompt shows the last 8),
-profile | null   (solved, struggled, recurring, comfortable, begs),
-previous_hint_failed, session_id
-```
-
-Before the pipeline, `quota.check` decides whether the call may be answered at
-all: a per-caller rate limit and daily cap (cost), and a per-sitting interruption
-budget (courtesy). A refused call is *answered* — the pre-written rung for a rate
-limit, `stay_silent` for a spent budget — never rejected, so the lesson cannot
-stall. Cached answers skip the rate limits but not the budget.
-
-Pipeline inside `gen()`:
-
-```
-ck = cache.key(MODEL, SYSTEM, build_context(req))
-cache hit? ──yes──► replay(hit)  [tool → 24-char deltas → done{cached:true}]
-   │ no
-   ▼
-llm.complete(stream=True)
-   ├─ 'tool'  → sse('tool')
-   ├─ 'delta' → sse('delta')          (prose field extracted from partial JSON)
-   └─ 'done'  → (tool, args)
-   │
-   ├─ exception ──► sse('fallback') + replay(prewritten(req, reason))
-   ▼
-sanitise(req, tool, args)
-   ├─ unknown tool / bad JSON / missing required args → fallback
-   ├─ give_hint.tier ≠ req.tier → clamp to req.tier (record _clamped_from)
-   ├─ leakguard.leaks(prose, req.tier, tier_texts) → fallback
-   ▼
-cache.put(ck, …); sse('done', {tool, args, source:'llm', doc_version})
-```
-
-SSE event vocabulary: `tool`, `delta`, `fallback`, `done`. The cached-replay
-path emits the same events as the live path so the client has one code path.
-
-### 8.2 Other endpoints
-
-| Endpoint | Purpose |
+| Field | Meaning |
 |---|---|
-| `POST /api/translate-error` | `errors.translate()` — regex dictionary, no model. Returns `{known:false}` on a miss. |
-| `POST /api/check-ladder` | runs a hint ladder past `leakguard` — used to lint the hand-written hints |
-| `GET /api/health` | model, key presence, cache stats, and `llm.last_outcome` (drives the "hints: pre-written" badge) |
+| `solved / total` | Progress |
+| `struggled` | Up to 3 exercises that reached tier 3, or took 4+ attempts (most recent) |
+| `recurring` | Up to 2 mistakes seen in **more than one** exercise (a habit, not an accident) |
+| `comfortable` | Up to 3 sections where everything touched was easy |
+| `begs` | Times they asked to simply be told the answer |
 
-### 8.3 `llm.py` — provider boundary
+Returns `null` for a newcomer, so nothing is invented.
 
-The only module that imports `openai` or reads `LLM_*` environment variables.
-`complete()` sends `tool_choice="required"`, `temperature=0.3`,
-`max_tokens=400`. The streaming path extracts the prose argument
-(`_PROSE_FIELD[tool]`) from the half-written JSON with `_partial_string()` so
-text can be forwarded before the object closes.
+### 6.4 Misconception detectors
 
-Retry policy: at most two retries (0.5 s, 1.5 s), honouring `retry-after` when
-it is ≤ 3 s, otherwise giving up immediately — the client's prewritten hint is
-faster than a slow correct one. Every outcome updates `last_outcome` for
-`/api/health`.
+Seven AST shapes: `no-loop`, `index-value-confusion`, `range-off-by-one`,
+`accumulator-init-inside-loop`, `accumulator-reassigned`,
+`accumulator-printed-inside-loop`, `loop-body-outside`. They are all
+loop-shaped, so each exercise lists which it `watch`es, and a detection outside
+that list is discarded (`no-loop` is true of every exercise before the loops
+section).
 
-### 8.4 `leakguard.py`
+### 6.5 Did the last hint land? (`escalation.ts`)
 
-Derives, from the **tier-5 text of the current exercise**, the code fragments
-that only tier 5 may say (`_CODE` regex: assignments, augmented assignments,
-calls, ≥5 chars) and (name, number) pairs (`_INIT` regex, e.g. `("total","0")`).
-`leaks(text, tier, tier_texts)` returns the offending fragment if tier < 5 and
-either a fragment appears verbatim or a name and its number appear within 40
-characters. Nothing is configured per exercise.
+If the gate reopens and the buffer is byte-for-byte what it was when the last
+hint was given, that hint did not land. The next hint climbs a rung, and the
+request carries `previous_hint_failed` so the model is told not to say it again.
+A question is answered where the ladder is, not pushed up it.
 
-### 8.5 `cache.py`
+---
 
-`sha256(model ‖ system ‖ context)[:32]` → `server/.cache/<key>.json`. Disabled
-with `LLM_CACHE=0`. Exists because tuning sessions replay near-identical
-context hundreds of times against a daily token cap.
+## 7. The teacher, client side (`src/teacher/bridge.ts`)
+
+`requestTeaching(trigger, question?)` is the single entry point, with
+`trigger` one of `gate` (the observer fired), `ask` (the learner asked) or
+`success`.
+
+```
+1  guard: ignore a gate trigger on an exercise already solved
+2  abort anything in flight; remember buffer, doc version, exercise index
+3  did the last hint land?  (gate only: climb the tier and tell the model)
+4  build the request: buffer, exercise + concept + section, tier + all 5 rungs,
+   last run (and whether THIS run was correct), misconceptions, observer
+   numbers, conversation tail, learner profile, session id
+5  POST /api/teach, read the SSE stream
+     tool  -> open the speech bubble (kind + tier)
+     delta -> reveal text progressively (paced client-side; cosmetic)
+6  decision arrives:
+     null (network failed)  -> hand-written rung, noted "backend unreachable"
+     stay_silent            -> no bubble; the model's reason goes to the dev panel
+     exercise changed       -> discard
+     buffer materially changed -> discard  (staleness guard)
+     otherwise              -> re-key the bubble to the FINAL tool, set text,
+                               target line, example, follow-up; record the turn;
+                               charge the budget if it was a gate; save progress
+```
+
+Notes:
+
+- **The server has the last word on the tool.** The bubble opens on the streamed
+  tool name so the reveal can start early, but a guard can replace the model's
+  choice with a hand-written rung, so the bubble is re-keyed at the end.
+- **Staleness.** An answer arriving against a changed program is discarded: the
+  target line's content changed, or the length moved by more than 12 characters,
+  or the count of non-blank lines changed, or the exercise became solved while
+  in flight. A tutor explaining a bug they already fixed costs more trust than
+  five missed interventions.
+- **Speech never writes to the buffer.** It renders inside the editor as a block
+  widget below the target line (amber, never red, since half of these are not
+  errors). An explanation's example goes to the read-only example pane.
+- **Cleaning.** All teacher text passes through `plain()`, applied to the whole
+  text so far while streaming (a dash and its spaces can arrive split).
+- `translateError` is a pure dictionary lookup and is **not** gated, billed or
+  counted as an interruption.
+
+---
+
+## 8. Editor and UI
+
+- **Editor.tsx** mounts CodeMirror once, with static extensions (re-mounting
+  would destroy the buffer). Exercise changes dispatch a whole-document swap
+  tagged `programmaticEdit`; a `bufferEpoch` counter forces the swap when a
+  different learner takes over on the same exercise.
+- **teacherWidget.ts** keeps speech in a `StateField` and renders it as a block
+  widget. Streaming updates patch the existing node, so a hint does not flicker.
+- **Layout.** The workspace is code area | splitter | output. The code area is
+  editor (and the example pane when open), a splitter, and the **dock** holding
+  the conversation and the ask box. Three splitters are draggable (keyboard
+  accessible); sizes persist per browser in `teaching-ide:layout`.
+- **Conversation.tsx** shows the thread for the current exercise as chat bubbles,
+  each teacher turn labelled with what it was (hint and tier, explanation,
+  question, success). It opens itself when the learner speaks and shows a
+  thinking indicator while a request is in flight.
+- **Voice.** `useVoice` records with `MediaRecorder` only while the learner has
+  asked, releasing the microphone the moment it stops. The audio goes to
+  `/api/transcribe`; the words land in the ask box and are **never sent
+  automatically**, because speech-to-text mangles code ("colon" is not "Colin").
+- **Themes.** Light and dark, following the OS until a choice is made. Every
+  colour is a CSS variable; the editor's syntax colours read the same ones, so
+  switching never rebuilds the editor. `index.html` sets the theme before first
+  paint.
+- **Dev panel.** Closed by default (`teaching-ide:observer`). Live score and every
+  contributing signal, the gate verdict and why, the last 20 events, the teacher's
+  state and where its words came from, and a slider for each of the 27 tunables.
+  Export log downloads the session as JSON.
+- **Preferences** (theme, layout, panel) live in `localStorage` and are never
+  load-bearing: storage may be blocked or throw.
 
 ---
 
@@ -502,15 +429,18 @@ context hundreds of times against a daily token cap.
 
 | State | Owner | Read by |
 |---|---|---|
-| Editor document | CodeMirror `EditorView` | observer (via update listener), bridge (via `observer.doc()`) |
+| Editor document | CodeMirror `EditorView` | observer (update listener), bridge (`observer.doc()`) |
 | `docVersion` | `observer.ts` | bridge (staleness) |
-| Event log, score, gate state, cosmetic streak | `observer.ts` (+ `log.ts`, `semantics.ts`) | DevPanel via snapshot; bridge via `idleMs()`, `currentScore()` |
-| Observer config | `config.ts` (mutable singleton) | score, gate, DevPanel sliders |
-| Runner status, last result | `runner.ts` → mirrored into store | App, OutputPane |
-| Exercise index, tier, attempts, hintsGiven, solved, misconceptions, speech, recent, askedForAnswer, health, lastSilence | Zustand store | React components; `teaching.ts`; `bridge.ts` |
+| Event log, score, gate state, non-progress streak | `observer.ts`, `log.ts`, `semantics.ts` | dev panel via snapshot; bridge via `idleMs()` |
+| Observer config | `config.ts` (mutable singleton) | score, gate, dev panel sliders |
+| Runner status, last result | `runner.ts`, mirrored into the store | App, OutputPane |
+| Exercise index, tier, attempts, hints given, solved, misconceptions, seen, begs, conversation, speech, health | Zustand store | components, `teaching.ts`, `bridge.ts` |
+| Per-exercise saved rows (ladder, conversation, mistakes) | `data/progress.ts` map, mirrored to Supabase | profile, `goToExercise` |
+| Last hint given on each exercise (and the code it was given against) | `bridge.ts` | escalation |
 | Speech inside the editor | `speechField` (CodeMirror state) | decoration builder |
-| AST baseline | `semantics.ts` | `classify()` |
-| LLM outcome, cache | server process | `/api/health` |
+| AST baseline, starter structure | `semantics.ts` | `classify()`, `hasStarted()` |
+| Rate-limit counters | server memory (`quota.py`, `stt.py`) | `/api/teach`, `/api/transcribe` |
+| Response cache | `server/.cache/` on disk | `/api/teach` |
 
 Rule of thumb: high-frequency data (keystrokes, ticks, events) stays in module
 state and reaches React through `useSyncExternalStore`; low-frequency lesson
@@ -518,83 +448,447 @@ state lives in Zustand.
 
 ---
 
-## 10. Failure modes and their handlers
+## 10. The server (`server/`)
 
-| Failure | Where caught | Outcome |
+### 10.1 Endpoints
+
+| Endpoint | Purpose |
+|---|---|
+| `POST /api/teach` | The one streaming endpoint (SSE: `tool`, `delta`, `fallback`, `done`) |
+| `POST /api/translate-error` | Dictionary lookup, no model, no tokens, no gate |
+| `POST /api/transcribe` | Raw audio in, text out (voice questions) |
+| `POST /api/check-ladder` | Runs hand-written rungs through the leak and instruction guards |
+| `GET /api/health` | Model, key present, cache size, last provider outcome |
+
+Everything else is the built app (`dist/`), mounted last so every `/api` route
+wins. The interactive API docs are off unless `ENABLE_DOCS=1`. Every response
+carries `X-Content-Type-Options: nosniff`, `Referrer-Policy: same-origin` and
+`X-Frame-Options: DENY`. CORS is configured for the Vite dev origins only; in a
+deployment the app and API share an origin, so it never comes into play.
+
+### 10.2 `POST /api/teach`
+
+Request bounds (pydantic): buffer 8,000 characters, conversation 40 turns,
+question 1,000 characters, tier 1 to 5.
+
+```
+principal = signed-in user, else caller address
+hit       = cache.get(sha256(model + SYSTEM + context))
+verdict   = quota.check(principal, session, trigger, billable = no cache hit)
+
+refused by budget  -> stay_silent        (the observer is told to be quiet)
+refused by rate    -> hand-written rung  (with a "rate limited" note)
+cache hit          -> replay the stored decision as a stream
+otherwise          -> llm.complete(stream=True, tool_choice="required")
+                        forward tool + delta events
+                        sanitise(...)
+                          rejected -> hand-written rung, event "fallback"
+                          accepted -> done; write the cache
+```
+
+Refused calls are *answered*, never rejected, so the learner never sees an error
+for something that is not theirs. Fallback and hand-written decisions are never
+cached.
+
+### 10.3 What the model is told (`prompts.py`)
+
+The system prompt is static and says: you are a patient teacher of a beginner
+across a ramp of exercises; teaching is free but the exercise's answer is not;
+the current rung is a **ceiling** on what you may reveal, not a script; never
+repeat yourself; stay silent when they typed in the last 10 seconds (unless
+asked); use the learner's history without mentioning it; plain words, no
+exclamation marks, no long dashes.
+
+The per-call context, in order: the exercise and its section and topic; the
+learner profile (if any); their code with line numbers (first 30 lines); the last
+run; what the code shape suggests; timing from the observer; the current tier and
+all five rungs with the current one marked; the conversation so far (last 8
+turns, each clipped to 320 characters); a note when the previous hint did not
+land; and a trigger-specific closing instruction.
+
+### 10.4 Tools (`tools.py`)
+
+The model never returns free prose; it must call exactly one tool.
+
+| Tool | When | Notes |
 |---|---|---|
-| Infinite loop / runaway output | `runner.stop()`, 200 k-char cap in worker | worker terminated, fresh one booted, `Stopped` result; slow-run banner at 3 s |
-| `input()` called | worker `setStdin` → `null` | clean `EOFError`, translated by dictionary |
-| Pyodide fails to boot | `runner.spawn().catch` | status `failed`, Run disabled |
-| AST snapshot while running | `runner.astSnapshot` returns `null` | verdict `pending`; streak untouched |
-| Worker restart mid-snapshot | `semantics.generation` | stale snapshot dropped; baseline re-seeded |
-| Server unreachable | `client.askTeacher` → `null` | prewritten hint, `source:'prewritten'` |
-| Provider 429 / 5xx / connection | `llm._create_with_retry` | bounded retry, then `fallback` SSE + prewritten |
-| Malformed / wrong tool call | `main.sanitise` | prewritten, note recorded |
-| Model gives away the answer | `leakguard.leaks` | prewritten, note names the fragment |
-| Model picks a lower tier | `main.sanitise` | clamped to request tier |
-| Answer arrives after buffer changed | `bridge.materiallyChanged` | discarded, `lastSilence` explains |
-| Daily token cap | `llm.last_outcome` → `/api/health` | top-bar badge "hints: pre-written · daily token cap reached" |
+| `give_hint` | Stuck on their code | `tier` must equal the requested tier; `target_line` is a required integer, 0 for none |
+| `explain` | They asked about an idea | `text`, `example` (a different problem), `followup_question`; the last two are required strings, empty when unused |
+| `ask_question` | They asked to be told the answer | One concrete question about their own code |
+| `translate_error` | An error the dictionary did not know | |
+| `confirm_success` | They solved it | Confirm, then usually ask why it worked |
+| `stay_silent` | Mid-thought, progressing, one step away | `reason` is for the person tuning the system |
 
-The invariant: **the lesson never stalls.** Every path ends in either speech
-from the ladder or deliberate silence with a recorded reason.
+Schemas are deliberately flat. Optional and nullable fields were measured to
+fail: the model emits `null` for "no value" however the schema is written, and
+the provider rejects the whole call. Required fields with empty-string or
+zero sentinels never do.
+
+### 10.5 Guards (`sanitise` and `leakguard`)
+
+`sanitise` runs on every model decision, in order: a tool was called; it is a
+known tool; the arguments parsed; required arguments are present;
+`give_hint` has text and its tier is **clamped** to the requested one; then:
+
+1. **Instructions at rungs 1 and 2** (`give_hint`, `ask_question`). An action verb
+   that opens a sentence or follows a connective ("then add", "try creating") is
+   rejected. "Create the total before the loop, then add each number" is the
+   whole solution in words, with no code for the next check to find. Concept
+   explanations are exempt. The hand-written rungs pass the same rule, and
+   `/api/check-ladder` lints them against it.
+2. **Leaks** (every tool, over `text`, `plain_english`, `followup_question` and
+   `example`). Below tier 5 it extracts code fragments (assignments, calls) and
+   (name, value) pairs from the exercise's own tier-5 text, then rejects any
+   text containing a fragment verbatim, or a variable name within 40 characters
+   of its initial value (which catches "the line that sets total to zero").
+   Nothing is configured per exercise: the ladder defines its own forbidden set.
+
+Anything rejected becomes the hand-written rung with the reason as a note.
+
+### 10.6 Limits (`quota.py`)
+
+Per **principal** (signed-in user, else address; `X-Forwarded-For` only if
+`TRUST_PROXY=1`), in memory:
+
+| Limit | Default | Kind |
+|---|---|---|
+| Calls per minute | 10 | Cost control |
+| Calls per day | 400 | Cost control |
+| Observer interruptions per sitting | 8 | Courtesy |
+
+The first two hold whatever the caller says about itself. The third is keyed by a
+session id the **client** chooses, so a client that wants to can rotate it; it
+keeps the observer polite to an honest learner and is not protection. Cached
+answers skip the rate limits but not the budget. Counters reset on restart and
+are per process: more than one worker multiplies them.
+
+### 10.7 Other server modules
+
+- **errors.py**: 16 regex rules across 9 exception types turn a Python error into
+  plain English before any model is involved.
+- **cache.py**: one JSON file per decision, keyed on model, system prompt and the
+  full context. No TTL or eviction. Changing a tool schema does not invalidate it.
+- **auth.py**: HS256 verification of a Supabase JWT with audience
+  `authenticated`. With no secret configured every call is anonymous; with one, no
+  header is anonymous, a valid token yields the user id, and a bad token is a 401
+  (a presented identity must verify).
+- **stt.py** and `llm.transcribe`: audio is held in memory for the request,
+  passed to the provider (Whisper), and dropped; never logged or stored. Limits are
+  separate from the teacher's (6 a minute, 150 a day, 4 MB, formats by
+  content type), so talking cannot spend the hint budget. The prompt seeds Python
+  vocabulary, and segments Whisper itself judges to be silence or repetition are
+  discarded, because it invents text such as "Thank you." from noise. It does
+  not update the health indicator.
+
+### 10.8 The provider boundary (`llm.py`)
+
+The only module that imports `openai` or reads `LLM_*`. Any OpenAI-compatible
+endpoint with tool calling works; switching is `LLM_BASE_URL`, `LLM_API_KEY` and
+`LLM_MODEL`.
+
+- Streaming extracts the prose field from half-written JSON arguments so deltas
+  can be emitted before the call completes. `stay_silent` has no prose field, so
+  silence streams nothing.
+- Retries: up to 3 attempts (0.5 s, 1.5 s, jittered) on rate limit, 5xx and
+  connection errors only. A `Retry-After` over 3 s is not waited for. There is no
+  explicit request timeout.
+- `last_outcome` (ok, reason, retry-after) feeds `/api/health` and the top-bar
+  "hints: pre-written" notice, with provider limit messages mapped to short
+  reasons ("daily token cap reached").
 
 ---
 
-## 11. Configuration and environment
+## 11. Accounts and persistence (Supabase, optional)
+
+The browser talks to Supabase directly; there is no application server in
+between. With `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` unset, the client
+is `null`, there is no sign-in page (the app opens on the course page) and
+nothing is stored anywhere.
+
+### Pages and access
+
+The app is a small client-side router (wouter). Every path is the same
+`index.html`; the production server falls back to it for any path that is not a
+file (`SinglePageApp` in `server/main.py`), while a missing file or an `/api`
+path stays a real 404.
+
+```
+/signin           email + password: sign in, create account, forgot password;
+                  or Continue as guest. ?next=<path> is where to go afterwards
+/reset-password   where the link in a reset email lands; needs the session that
+                  link creates, and says so when there is none
+/courses          the catalogue: Python (progress, Start/Continue) and the
+                  courses to come, locked
+/course/:id       the lesson. An unbuilt or unknown course goes back to /courses
+/  and the rest   -> /courses
+```
+
+`/courses` and `/course/:id` are behind a guard (`useAccess`, `src/auth/access.ts`):
+`pending` until the first auth check settles (a spinner, so a signed-in learner is
+never shown the form), `allowed` when they are signed in or have chosen to continue
+as a guest, otherwise they are sent to `/signin?next=...`. `next` comes from the URL,
+so only a path on this site is followed (`safeNext`); `//host` and the sign-in pages
+themselves are refused. With no Supabase project everyone is allowed.
+
+"Continue as guest" is a per-tab choice in `sessionStorage`: a refresh keeps it, a new
+tab asks again, a sign-out clears it. A guest has the whole lesson; progress lives in
+memory for the sitting, as it always did.
+
+Email confirmation may be on or off in the project. Sign-up returns `{ confirm }`:
+false signs them in; true shows "check your email" with a resend. Password reset emails
+a link to `/reset-password`, which must be among the project's allowed redirect URLs.
+
+The lesson is a page that comes and goes, and the observer, runner and store are
+module-level, so entering and leaving it has to be clean:
+
+- **Arriving** starts the observer's attention from now (`observer.start`), because the
+  module loaded with the app, possibly minutes before the lesson did. A run made before
+  they left is not "untouched since": the editor comes back at the starter.
+- **Leaving** (`leaveLesson`) banks progress for a signed-in learner, drops a teacher
+  answer in flight, stops code still running in the worker, and clears what only made
+  sense beside the code on screen (the speech bubble, the last run's output). The
+  conversation and the ladder are kept, exactly as when moving between exercises.
+- **Continue** on the course card (`resumeCourse`) opens the first unsolved exercise
+  for someone who has just signed in; a sitting that has already moved is left where it is.
+
+```
+progress  (user_id, exercise_id) PK
+          solved, tier, attempts, hints_given, begs, seen text[], thread jsonb,
+          updated_at (trigger)
+sessions  id PK, user_id, started_at, duration_ms, exercise_id,
+          config jsonb, events jsonb, event_count, updated_at (trigger)
+RLS       both tables: for all using / with check (auth.uid() = user_id)
+Grants    authenticated only; the signed-out role has none, so the schema
+          works whether or not the project auto-exposes new tables
+```
+
+Lifecycle (`src/auth/session.ts`, `src/data/progress.ts`, `src/data/sessions.ts`):
+
+- **Sign-in:** read this user's rows into the store (restoring the current
+  exercise's tier, conversation and mistakes), open a session row, and flush the
+  observer log every 20 s and when the tab hides. A new account with no rows
+  **adopts** what the guest already did.
+- **Saving** is skipped until a read has succeeded (an empty store must never
+  overwrite real rows). Failures are surfaced ("nothing is being saved", with a
+  retry), not swallowed.
+- **Sign-out** flushes the session log first (the token is gone by the time the
+  auth event fires), then resets everything that belonged to the last learner:
+  ticks, ladder, conversation, mistakes, the editor buffer and the observer log.
+- A refresh starts a new session row rather than overwriting the old one.
+
+Rows are keyed by exercise `id`, and the `thread` is capped at 40 turns. The
+session `events` array is rewritten on every flush, which is fine for sessions of
+minutes and would want an append-only table if they grew long.
+
+---
+
+## 12. End-to-end flows
+
+**A stuck learner.** They run `total = 0` inside the loop and get 5, not 27. The
+run is clean but wrong: attempts +1, the AST diagnosis flags the misconception.
+They stop touching the code. The observer's idle-after-wrong-answer term ramps
+from 4 s; at about 0.6 and with cooldown and budget clear, the gate fires. The
+bridge builds the request (rung 1, the profile, the conversation so far) and
+streams it. The server clears the quota, builds the prompt, and the model calls
+`give_hint`. `sanitise` clamps the tier and finds no instruction or leak. The
+bridge checks the buffer has not moved, reveals the hint in the editor, records
+the turn in the conversation, charges the budget and saves progress. If they
+still have not touched the code when the gate reopens, the next hint is rung 2
+and the model is told the last one did not land.
+
+**A question.** They type "what does `n` mean?" into the ask box. The question
+joins the conversation, resets the cooldown and costs no budget. The model
+calls `explain`; the example appears in the read-only pane and the explanation in
+the bubble and the conversation.
+
+**A voice question.** They press the mic. The browser records until they stop
+(or 60 s), the microphone is released, the audio goes to `/api/transcribe`, and
+the transcript appears in the ask box for them to read and edit. Nothing is sent
+to the teacher until they press Ask.
+
+**Signing in mid-lesson.** The guest's ticks and conversation are kept if the
+account is new; for an existing account its saved state replaces them. Either
+way a session row opens and recording starts.
+
+---
+
+## 13. Failure modes
+
+| Failure | Where handled | Outcome |
+|---|---|---|
+| Infinite loop or runaway output | `runner.stop()`, 200k-character cap | Worker terminated, a fresh one boots, `Stopped` result; slow banner at 3 s |
+| `input()` called | Worker stdin returns null | Clean `EOFError`, explained by the dictionary |
+| Pyodide fails to boot | `runner.spawn()` | Status `failed`, Run disabled |
+| AST snapshot while a run is pending | `runner.astSnapshot` returns null | Verdict `pending`; streak untouched |
+| Worker restarts mid-snapshot | `semantics.generation` | Stale snapshot dropped; baseline re-seeded |
+| API unreachable | `askTeacher` returns null | Hand-written rung, noted "backend unreachable" |
+| Provider 429, 5xx, connection error | `llm._create_with_retry` | Bounded retry, then `fallback` event and a hand-written rung |
+| Daily token cap reached | `llm.last_outcome` | Top-bar notice; hints are hand-written until it resets |
+| Malformed, unknown or missing tool call | `sanitise` | Hand-written rung with the reason |
+| Hint instructs at rung 1 or 2 | `leakguard.instructs` | Hand-written rung |
+| Model gives away the answer | `leakguard.leaks` | Hand-written rung naming the fragment |
+| Model picks a different tier | `sanitise` | Clamped to the requested tier |
+| Per-minute or daily limit | `quota.check` | Hand-written rung, "rate limited" note |
+| Interruption budget spent | `quota.check` | `stay_silent` with the reason |
+| Answer arrives after the buffer changed | `bridge.materiallyChanged` | Discarded; reason in the dev panel |
+| Answer arrives after leaving the exercise | `bridge` index check | Discarded |
+| Supabase unconfigured | `supabase === null` | Signed-out mode, nothing stored |
+| Progress cannot be read or saved | `data/progress.ts` | Visible notice with retry; no writes until a read succeeds |
+| Voice unavailable, blocked or empty | `stt.py`, `useVoice` | A plain message; typing still works |
+
+The invariant: **the lesson never stalls.** Every row above ends in speech from
+the ladder or silence with a recorded reason.
+
+---
+
+## 14. Security and privacy
+
+- **Untrusted code is sandboxed in the learner's own tab.** The server never
+  executes or sees learner code except as text in a hint request.
+- **Secrets stay on the server.** The model key is read only by `llm.py`. The two
+  `VITE_` Supabase values are public by design; row-level security protects the
+  data, and `scripts/verify-supabase.mjs` checks it against the real project.
+- **Rate limits** (section 10.6) bound cost per caller. Capacity beyond that
+  comes from the provider's plan.
+- **Voice audio is not kept.** It lives in memory for one request.
+- **Hardening:** API docs off, security headers, bounded request sizes, and a
+  pydantic schema on `/api/teach`.
+- **Anonymous use is allowed** by design; an unverifiable token is not.
+
+---
+
+## 15. Configuration
 
 | Variable | Read by | Default |
 |---|---|---|
-| `LLM_BASE_URL` | `server/llm.py` | `https://api.groq.com/openai/v1` |
-| `LLM_API_KEY` | `server/llm.py` | `""` (sent as `not-needed` for local providers) |
-| `LLM_MODEL` | `server/llm.py` | `llama-3.3-70b-versatile` (`.env.example` sets `openai/gpt-oss-120b`) |
-| `LLM_CACHE` | `server/cache.py` | `1` |
+| `LLM_BASE_URL` | `llm.py` | `https://api.groq.com/openai/v1` |
+| `LLM_API_KEY` | `llm.py` | empty (all hints hand-written) |
+| `LLM_MODEL` | `llm.py` | `llama-3.3-70b-versatile` in code; `.env.example` sets `openai/gpt-oss-120b` |
+| `LLM_CACHE` | `cache.py` | `1` |
+| `STT_MODEL` / `STT_LANGUAGE` | `llm.py` | `whisper-large-v3-turbo` / detect (`none` switches voice off) |
+| `STT_PER_MINUTE` / `STT_PER_DAY` / `STT_MAX_BYTES` | `stt.py` | 6 / 150 / 4 MB |
+| `TEACH_PER_MINUTE` / `TEACH_PER_DAY` / `TEACH_GATE_BUDGET` | `quota.py` | 10 / 400 / 8 |
+| `TRUST_PROXY` | `quota.py` | `0` |
+| `SUPABASE_JWT_SECRET` / `SUPABASE_JWT_AUDIENCE` | `auth.py` | empty (anonymous) / `authenticated` |
+| `ALLOWED_ORIGINS` | `main.py` | the Vite dev origins |
+| `ENABLE_DOCS` | `main.py` | `0` |
+| `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` | the browser, **at build time** | empty (signed-out mode) |
 | `CHROME` | `tests/run.mjs` | auto-detected |
 
-Observer weights and thresholds live in `src/observer/config.ts`
-(`DEFAULT_CONFIG`) and are mutated live from the dev panel; they are not
-environment-driven.
-
-Vite (`vite.config.ts`): React plugin, `optimizeDeps.exclude: ['pyodide']`,
-ES-module workers, `/api` proxied to `127.0.0.1:8000`.
+Observer weights and thresholds are in `src/observer/config.ts`, mutated live from
+the dev panel, and are not environment-driven.
 
 ---
 
-## 12. Testing architecture
+## 16. Build, run and deploy
 
-```
-tests/run.mjs ── selects suites ──┬── unit (Node)
-                                  │     harness.test.mjs    loads Pyodide in Node, runs HARNESS
-                                  │     ast.test.mjs        AST_HARNESS verdicts
-                                  │     diagnose.test.mjs   DIAGNOSE_HARNESS detectors
-                                  │     observer.test.ts    esbuild-bundled; computeScore + evaluateGate
-                                  │
-                                  └── browser (Puppeteer → real Chrome → http://localhost:5173)
-                                        phase1.mjs   editor + execution + Stop
-                                        phase2.mjs   observer, driven by real typing
-                                        phase3.mjs   lesson content, success detection, ladder
-                                        phase45.mjs  teacher (needs :8000), error dictionary, widget
+| Command | Does |
+|---|---|
+| `npm run dev` | Vite on :5173, proxying `/api` to :8000 |
+| `npm run api` | The API on :8000, reloading on `server/` changes only |
+| `npm start` | Build, then one process serving the app and the API on :8000 |
+| `npm run build` | Typecheck then Vite build into `dist/` |
+| `npm test [suite]` | The test runner (section 17) |
+| `npm run verify-supabase` | Round-trips both tables, RLS and the token path against a real project |
+| `npm run validate-tools` | 30 live calls: does tool calling work on this model |
 
-server/validate_tools.py   30 live give_hint calls → JSON-validity rate vs 95 % bar,
-                           plus 5 behaviour probes (silent / progressing / begging / solved / odd error)
-```
-
-The unit suites extract the Python harness strings directly from
-`src/exec/harness.ts` by text search, so the tested code is the shipped code.
-Browser suites reach into the app through `window.__teachingIde`, `__store`,
-`__teaching`, `__bridge` and `__editorView`, which `main.tsx` exposes only in
-DEV.
+The **Dockerfile** is two stages: Node builds the bundle (the two `VITE_` values are
+build arguments), then a slim Python image runs `uvicorn` on one process as a
+non-root user, with a healthcheck on `/api/health`. One process is deliberate,
+since the limits live in memory. The Dockerfile has not been built on the machine
+this was written on.
 
 ---
 
-## 13. Build and serve
+## 17. Testing architecture
 
-- **Dev:** `npm run dev` (Vite, 5173) + `npm run api` (uvicorn `--reload`, 8000).
-  `predev` copies Pyodide into `public/pyodide/`.
-- **Build:** `npm run build` → `tsc -b` (project references: `tsconfig.app.json`
-  for `src/`, `tsconfig.node.json` for `vite.config.ts`) then `vite build` →
-  `dist/`. The worker is emitted as a separate ES-module chunk.
-- **Type-check only:** `npm run typecheck`.
+`tests/run.mjs` runs named suites, or `unit`, or `browser`. Browser suites drive
+real Chrome against the dev server and need `npm run dev` (and `npm run api` for
+the live-teacher suite).
 
-There is no production deployment story yet; the server is run locally and the
-frontend is served by Vite. `dist/` would need a static host plus a reverse
-proxy for `/api`.
+| Suite | Kind | Covers |
+|---|---|---|
+| harness, ast, diagnose | unit (Node + Pyodide) | The exact Python the worker ships: errors and lines, AST verdicts, detectors |
+| observer | unit | Every score term, the gate, structural "empty" |
+| lesson | unit | Learner profile, did-the-last-hint-land |
+| plain | unit | The long dash taken out of teacher text, including across stream chunks |
+| auth | unit (Python) | Token handling: anonymous, valid, expired, wrong audience |
+| teacher | unit (Python) | Prompt contents, memory, `explain`, sanitising, instruction guard, quotas |
+| api | unit (Python) | The HTTP surface with the model stubbed: limits, fallbacks, headers, single origin |
+| stt | unit (Python) | Voice limits, formats, provider errors (stubbed) |
+| phase1 | browser | Editor and execution, Stop, restart |
+| phase2 | browser | The observer live, the dev panel |
+| phase3 | browser | Lesson content and the ladder |
+| phase45 | browser | The live teacher (spends model tokens) |
+| phase6 | browser | The product teacher: memory, `explain`, hints that did not land, conversation panel |
+| accounts | browser | Sign-in, saved progress, memory, reset on sign-out, against a fake Supabase |
+| pages | browser | Redirects and the guard, guest, sign-in/up (confirmation on and off), password reset, the course page and Continue, coming back to the lesson, no-Supabase mode |
+| voice | browser | The mic with a fake microphone and a stubbed server |
+
+Techniques worth knowing:
+
+- **Stubbed model.** Suites that test this app's handling of the teacher serve a
+  crafted event stream, so what is under test is deterministic and spends no tokens.
+- **Fake Supabase** (`tests/support/fake-supabase.mjs`). An in-memory stand-in for
+  auth and the two tables. It has no row-level security and does not pretend to.
+- **Reload guard** (`tests/support/reload-guard.mjs`). The dev server reloads the
+  page whenever a source file is saved, which resets app state mid-test and shows
+  up as a baffling failure elsewhere. Browser suites now report an unexpected
+  reload as exactly that. It counts document loads, not navigations, so moving
+  between the app's own pages is not mistaken for a reload.
+- **Entering as a guest** (`tests/support/guest.mjs`). The lesson is behind the
+  sign-in page, so suites that are not about signing in set the guest flag before
+  the page loads and go to `/course/python`.
+- **Interception off while Python boots.** Request interception holds the
+  Pyodide worker's own requests, so suites enable it only after the runtime is
+  ready.
+- Test seams (`window.__store`, `__teaching`, `__bridge`, `__teachingIde`,
+  `__editorView`) exist only in development builds.
+
+---
+
+## 18. Design decisions and known limits
+
+**Decisions**
+
+- **Tier is the client's, phrasing is the model's.** The ladder is the product,
+  so the model cannot skip rungs by claiming it is on a different one.
+- **Required-with-sentinel over optional-or-null** in every tool schema, because
+  measurement showed `null` breaks calls (about 22% on the default model).
+- **Recomputed score, not an accumulator,** so the dev panel can show exactly why.
+- **Structural "empty", not a length.** Length is wrong at both ends of the ramp.
+- **Refused calls are answered.** Limits degrade the experience to hand-written
+  hints, never to an error.
+- **Persistence is the browser's job.** There is no application server between the
+  learner and Supabase, so the lesson works with the API down.
+
+**Known limits**
+
+- **Prose that explains more than a rung intends is only checked at rungs 1 and 2.**
+  From rung 3 a hint may legitimately explain the mechanism, and nothing stops
+  one that explains more. A model-based check would be needed to close this.
+- **The instruction guard is lexical.** It catches action verbs opening a
+  sentence or following a connective, not every way of telling someone what to do.
+- **Rate limits are in memory and per process.** Use Redis behind `quota.py` for
+  more than one worker.
+- **The interruption budget is a courtesy,** because the session id is the client's.
+- **Capacity is the provider's.** A free plan allows a few teacher calls a minute
+  across all learners; beyond it everyone gets hand-written hints.
+- **The default model in code disagrees with `.env.example`.** The code falls back
+  to `llama-3.3-70b-versatile`; the example sets `openai/gpt-oss-120b`.
+- **No explicit request timeout** on provider calls, and retries total about 2 s.
+- **The misconception detectors are loop-shaped.** A `while`-based solution looks
+  like `no-loop` on the loop exercises.
+- **The response cache has no eviction or TTL,** and does not include tool schemas
+  in its key.
+- **Session logs rewrite the whole event array** on each flush.
+- **Leaving the lesson for the course page loses the code in the editor.** It comes
+  back at the exercise's starter, as it does moving between exercises. Nothing keeps a
+  buffer per exercise.
+- **Only Python is a course.** `courses.ts` is data, but the runner, the observer's code
+  analysis, the error dictionary and the teacher's prompt are Python's, and the store
+  and lesson flow address one ramp (`EXERCISES`). A second language is more than an entry.
+  `progress` is keyed by exercise id alone, so a second course needs ids that are unique
+  across courses, or a `course_id` column.
+- **"Continue as guest" does not survive a closed tab,** by design.
+- **The Dockerfile is unbuilt.**

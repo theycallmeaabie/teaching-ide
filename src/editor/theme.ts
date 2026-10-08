@@ -18,7 +18,7 @@ const highlight = HighlightStyle.define([
 ])
 
 const theme = EditorView.theme({
-  '&': { height: '100%', fontSize: '15px', color: 'var(--text)' },
+  '&': { height: '100%', fontSize: '16px', color: 'var(--text)' },
   '.cm-scroller': { fontFamily: 'var(--mono)', lineHeight: '1.7' },
   '&.cm-focused': { outline: 'none' },
   '.cm-content': { caretColor: 'var(--accent)' },

@@ -1,8 +1,10 @@
 import puppeteer from 'puppeteer-core'
 import { watchReloads } from '../support/reload-guard.mjs'
+import { asGuest, LESSON } from '../support/guest.mjs'
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const b = await puppeteer.launch({ executablePath: process.env.CHROME || '/usr/bin/google-chrome', headless: 'new', args: ['--no-sandbox', '--disable-dev-shm-usage'] })
 const page = await b.newPage()
+await asGuest(page)
 const reloads = watchReloads(page, 1)
 await page.setViewport({ width: 1500, height: 950 })
 const errors = []
@@ -10,7 +12,7 @@ page.on('pageerror', (e) => errors.push('pageerror: ' + e.message))
 page.on('console', (m) => { if (m.type() === 'error') errors.push('console: ' + m.text()) })
 // This suite reads the observer panel, which is closed by default; open it the way a researcher would.
 await page.evaluateOnNewDocument(() => localStorage.setItem('teaching-ide:observer', '1'))
-await page.goto('http://localhost:5173/', { waitUntil: 'networkidle2' })
+await page.goto(LESSON, { waitUntil: 'networkidle2' })
 await page.waitForFunction(() => document.querySelector('.status')?.textContent.trim() === 'ready', { timeout: 90000 })
 await page.waitForFunction(() => !!window.__teachingIde, { timeout: 20000 })
 
