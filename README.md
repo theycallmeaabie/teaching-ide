@@ -33,6 +33,10 @@ npm run api     # teacher on http://127.0.0.1:8000  (second terminal)
 For one process serving everything, as in production: `npm start` builds the app
 and serves it, with the API, on http://127.0.0.1:8000.
 
+The app opens on a sign-in page, then a course page, then the lesson (see
+[Pages](#pages)). With no Supabase project configured there is nothing to sign in
+to, so it opens straight on the course page.
+
 Vite proxies `/api` to the backend. **The editor, the observer and the whole hint
 ladder work with the backend down**. The teacher falls back to the pre-written
 hints. Only the adapted phrasing needs the API.
@@ -60,8 +64,8 @@ SUPABASE_URL=https://<project>.supabase.co   # the same URL: the API checks sign
 # SUPABASE_JWT_SECRET=...         # only for a project still on the legacy JWT secret
 ```
 
-That turns on a sign-in control in the top bar, per-exercise progress that
-survives a refresh, and automatic session recording: the observer's event log
+That turns on the sign-in page (email and password, with password reset),
+per-exercise progress that survives a refresh, and automatic session recording: the observer's event log
 written to the `sessions` table every 20 seconds instead of depending on
 someone clicking **Export log**.
 
@@ -77,13 +81,46 @@ and, if the API is up, that it accepts a real token and rejects a forged one.
 Those session rows are the evidence the whole premise is judged on, so "it
 compiled" is not proof they are being written.
 
-**Leave those blank and nothing changes.** No sign-in appears, progress lives in
+Two settings in the Supabase dashboard matter to the sign-in page:
+
+- **Authentication → URL Configuration → Redirect URLs:** add
+  `<your origin>/reset-password` (and `http://localhost:5173/reset-password` for
+  development). The link in a password-reset email comes back to that address; without it
+  Supabase sends people to the project's Site URL instead.
+- **Authentication → Providers → Email → Confirm email** can be on or off, and the
+  sign-up form handles both: off signs them straight in, on shows "check your email" with
+  a resend button. Supabase's built-in mailer is heavily rate-limited, so use your own SMTP
+  provider before real learners arrive.
+
+**Leave those blank and nothing changes.** No sign-in page appears, progress lives in
 memory as before, and the API serves every call anonymously. Both tables are
 row-level secured: a learner can only ever read or write their own rows.
 
 The interruption budget of 8 is still enforced client-side only. Identity now
 reaches `/api/teach`, so moving that check to the server is a small change, but
 it is not done: anyone who can reach the API can still spend tokens freely.
+
+## Pages
+
+| Path | What it is |
+|---|---|
+| `/signin` | Email and password: sign in, create an account, forgot password. Or **Continue as guest** |
+| `/courses` | Choose a course: Python (with your progress and Continue), and the ones to come, locked |
+| `/course/python` | The lesson |
+| `/reset-password` | Where the link in a password-reset email lands |
+
+The course page and the lesson need someone to have signed in or chosen **Continue as
+guest**. A guest gets the whole lesson; nothing is saved when the tab closes, and the choice
+is per tab (a new tab asks again). Asking for a page while signed out sends you to
+`/signin`, and signing in takes you where you were going, if it is a page on this site.
+
+Courses are data in `src/lesson/courses.ts`, so a new card is one entry. Only Python has
+anything behind it: the runner, the observer's code analysis, the error dictionary and
+the teacher's prompt are Python's, so a second language is more than a card.
+
+The pages are routes in the browser, so a production server has to send every path that
+is not a file to `index.html`. `npm start` does (`server/main.py`); if you host `dist/`
+somewhere else, configure the same fallback there.
 
 ## Tests
 
@@ -95,6 +132,7 @@ npm test auth       # token handling, no network
 npm test teacher    # what the teacher is told, what it may say, who may ask
 npm test api        # the HTTP surface with the model stubbed
 npm test accounts   # sign-in, saved progress and memory (a fake Supabase)
+npm test pages      # sign-in, guest, the course page, routing, password reset (a fake Supabase)
 npm run validate-tools    # 30 live calls: does tool calling actually work
 ```
 
@@ -108,7 +146,8 @@ src/
     harness.ts    the Python that runs learner code, diffs ASTs, spots misconceptions
   observer/     the stuck score: signals, weights, gate, event log
   lesson/       twenty exercises, five hand-written rungs each; the learner profile
-  auth/         Supabase client and session lifecycle (optional)
+  auth/         Supabase client, session lifecycle, who may see a page, guest entry (optional)
+  pages/        one file per route: sign-in, reset password, courses, the lesson
   data/         saved progress and server-side session logs
   teacher/      SSE client, staleness guard, reveal pacing
   editor/       CodeMirror 6 + the inline teacher widget
