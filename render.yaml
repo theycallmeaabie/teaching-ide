@@ -1,0 +1,45 @@
+# Render Blueprint: one web service, built from the Dockerfile.
+#
+#   Render → New → Blueprint → this repo → fill in the four prompted values → Apply.
+#
+# Render passes every variable below to `docker build` as a build argument too,
+# which is how the two VITE_ values reach the browser bundle (see the Dockerfile).
+# The `sync: false` ones are asked for once, when the Blueprint is first applied,
+# and never stored here; change them later under the service's Environment tab.
+# .env.example documents every setting.
+
+services:
+  - type: web
+    name: teaching-ide
+    runtime: docker
+    # Free sleeps after 15 minutes idle and takes about a minute to wake. Keep it
+    # to one instance on any plan: the rate limits live in memory (server/quota.py).
+    plan: free
+    # Fixed at creation. Singapore is the nearest to learners in India, and every
+    # learner downloads the ~15 MB Python runtime from here.
+    region: singapore
+    branch: main
+    # Every push to main goes live.
+    autoDeployTrigger: commit
+    # Always 200 while the process is up, whatever the model provider is doing.
+    healthCheckPath: /api/health
+    envVars:
+      # The teacher. Swapping providers is these three; see .env.example.
+      - key: LLM_BASE_URL
+        value: https://api.groq.com/openai/v1
+      - key: LLM_MODEL
+        value: openai/gpt-oss-120b
+      - key: LLM_API_KEY
+        sync: false
+      # Accounts. The project URL goes in twice: once for the browser bundle, once
+      # for the API to check sign-ins against (server/auth.py says why).
+      - key: VITE_SUPABASE_URL
+        sync: false
+      - key: VITE_SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      # Render's proxy is in front, so rate limits must read the forwarded address
+      # or every learner shares one bucket.
+      - key: TRUST_PROXY
+        value: "1"

@@ -285,7 +285,7 @@ async def health() -> dict[str, Any]:
         "cache": cache.stats(),
         "llm": llm.last_outcome,
         # Whether a presented token must verify. False means every call is treated
-        # as anonymous, which is the default until SUPABASE_JWT_SECRET is set.
+        # as anonymous, the default until SUPABASE_URL or SUPABASE_JWT_SECRET is set.
         "verifies_tokens": auth.ENABLED,
     }
 
