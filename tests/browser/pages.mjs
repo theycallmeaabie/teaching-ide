@@ -213,7 +213,8 @@ try {
   await waitPath(gp, '/courses')
   check('an address that is not on this site is not followed after sign-in', (await gp.evaluate(() => location.origin)) === url('').replace(/\/$/, ''), await gp.evaluate(() => location.href))
   check('a guest is told nothing is saved', /guest/i.test(await textOf(gp, '.courses-sub')) && /nothing is saved/i.test(await textOf(gp, '.courses-sub')))
-  check('...and the top bar says Guest, with a way to sign in', (await textOf(gp, '.auth-who')) === 'Guest' && !!(await gp.$('.authbar a')))
+  check('...and the top bar offers Sign in, with no "Guest" label beside it',
+    !!(await gp.$('.authbar a')) && !(await gp.$('.auth-who')) && !/guest/i.test(await textOf(gp, '.topbar-actions')))
   check('Python is not started', (await textOf(gp, '.course-go')) === 'Start' && /Not started/.test(await textOf(gp, '.course-count')))
 
   await gp.reload({ waitUntil: 'networkidle2' })

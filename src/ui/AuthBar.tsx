@@ -44,10 +44,11 @@ export function AuthBar() {
 
   return (
     <span className="authbar">
-      <span className="auth-who" title="Nothing is being saved. Sign in to keep your progress.">
-        Guest
-      </span>
-      <Link href={`/signin?next=${encodeURIComponent(location)}`} className="btn btn-ghost small">
+      <Link
+        href={`/signin?next=${encodeURIComponent(location)}`}
+        className="btn btn-ghost small"
+        title="Nothing is being saved. Sign in to keep your progress."
+      >
         Sign in
       </Link>
     </span>
