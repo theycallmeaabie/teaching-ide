@@ -56,7 +56,8 @@ Optional, and off until configured. Create a Supabase project, run
 ```
 VITE_SUPABASE_URL=https://<project>.supabase.co
 VITE_SUPABASE_ANON_KEY=...        # Project Settings -> API
-SUPABASE_JWT_SECRET=...           # Project Settings -> API -> JWT Settings
+SUPABASE_URL=https://<project>.supabase.co   # the same URL: the API checks sign-ins with it
+# SUPABASE_JWT_SECRET=...         # only for a project still on the legacy JWT secret
 ```
 
 That turns on a sign-in control in the top bar, per-exercise progress that

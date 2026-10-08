@@ -568,10 +568,14 @@ are per process: more than one worker multiplies them.
   plain English before any model is involved.
 - **cache.py**: one JSON file per decision, keyed on model, system prompt and the
   full context. No TTL or eviction. Changing a tool schema does not invalidate it.
-- **auth.py**: HS256 verification of a Supabase JWT with audience
-  `authenticated`. With no secret configured every call is anonymous; with one, no
-  header is anonymous, a valid token yields the user id, and a bad token is a 401
-  (a presented identity must verify).
+- **auth.py**: verification of a Supabase JWT with audience `authenticated`.
+  The token's header picks the check: ES256/RS256 against the project's public
+  keys (`SUPABASE_URL`, issuer `<url>/auth/v1`, key set cached five minutes and
+  refetched on an unknown key id at most every 30 s), HS256 against the legacy
+  `SUPABASE_JWT_SECRET`. A public key is never accepted as an HMAC secret. With
+  neither configured every call is anonymous; with either, no header is
+  anonymous, a valid token yields the user id, a bad token is a 401 (a presented
+  identity must verify), and unreachable keys are a 503.
 - **stt.py** and `llm.transcribe`: audio is held in memory for the request,
   passed to the provider (Whisper), and dropped; never logged or stored. Limits are
   separate from the teacher's (6 a minute, 150 a day, 4 MB, formats by
@@ -769,7 +773,7 @@ the ladder or silence with a recorded reason.
 | `STT_PER_MINUTE` / `STT_PER_DAY` / `STT_MAX_BYTES` | `stt.py` | 6 / 150 / 4 MB |
 | `TEACH_PER_MINUTE` / `TEACH_PER_DAY` / `TEACH_GATE_BUDGET` | `quota.py` | 10 / 400 / 8 |
 | `TRUST_PROXY` | `quota.py` | `0` |
-| `SUPABASE_JWT_SECRET` / `SUPABASE_JWT_AUDIENCE` | `auth.py` | empty (anonymous) / `authenticated` |
+| `SUPABASE_URL` / `SUPABASE_JWT_SECRET` / `SUPABASE_JWT_AUDIENCE` | `auth.py` | empty / empty (both empty: anonymous) / `authenticated` |
 | `ALLOWED_ORIGINS` | `main.py` | the Vite dev origins |
 | `ENABLE_DOCS` | `main.py` | `0` |
 | `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` | the browser, **at build time** | empty (signed-out mode) |

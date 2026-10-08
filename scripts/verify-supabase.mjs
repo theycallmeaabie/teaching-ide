@@ -5,9 +5,9 @@
  *
  * Reads VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY from .env, signs in (or
  * creates the account), round-trips a row through each table, and checks that
- * row-level security actually refuses a signed-out reader. If
- * SUPABASE_JWT_SECRET is set and the API is up, it also confirms the server
- * accepts the token and still serves anonymous calls.
+ * row-level security actually refuses a signed-out reader. If the API is up
+ * and verifying tokens (SUPABASE_URL or SUPABASE_JWT_SECRET set), it also
+ * confirms the server accepts the real token and rejects a forged one.
  *
  * Run this once after applying supabase/schema.sql. The session rows are the
  * evidence the whole proof of concept rests on; "it compiled" is not proof
@@ -142,11 +142,12 @@ if (status == null) {
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
     body: JSON.stringify({ buffer: '', exercise_id: 'x', exercise_prompt: '', expected_stdout: '', tier: 1, doc_version: 1 }),
   })
-  check('the API accepts a real Supabase token', withTok.status !== 401, `status ${withTok.status}`)
+  // 503: the API could not fetch the project's public keys, so it could not tell.
+  check('the API accepts a real Supabase token', withTok.status !== 401 && withTok.status !== 503, `status ${withTok.status}`)
   const health = await fetch('http://127.0.0.1:8000/api/health').then((r) => r.json()).catch(() => ({}))
   if (health.verifies_tokens === false || health.verifies_tokens === undefined) {
     // Off by default, and a legitimate choice: every call is then anonymous. Not a failure.
-    console.log('NOTE  the API is not verifying tokens (SUPABASE_JWT_SECRET is empty), so every call is treated as anonymous')
+    console.log('NOTE  the API is not verifying tokens (SUPABASE_URL and SUPABASE_JWT_SECRET are empty), so every call is treated as anonymous')
   } else {
     const withBad = await fetch('http://127.0.0.1:8000/api/teach', {
       method: 'POST',
