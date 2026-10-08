@@ -29,6 +29,11 @@ const runAndWait = async (src) => {
   await sleep(700)
 }
 const waitSpeech = (ms = 30000) => page.waitForFunction(() => !!window.__store.getState().speech, { timeout: ms })
+// A teacher request is started here and then waited for with waitQuiet (teacherBusy), NOT
+// awaited through page.evaluate. Holding a promise that is pending for seconds open across
+// the DevTools protocol intermittently fails with "Promise was collected" (about one run in
+// five here), though the page itself is fine: the request was answered and the speech
+// delivered. Starting it and polling the page's own state does not have that failure.
 const waitQuiet = (ms = 30000) => page.waitForFunction(() => !window.__store.getState().teacherBusy, { timeout: ms })
 // Exercises are addressed by id, never by position — the ramp is allowed to grow.
 const idx = (id) => page.evaluate(async (id) => (await import('/src/lesson/exercises.ts')).indexOfExercise(id), id)
@@ -52,7 +57,7 @@ await runAndWait('nums = [3, 7, 12, 5]\nfor n in nums:\n    total = 0\n    total
 // gate-triggered request has to be made from a genuinely idle state.
 console.log('   (waiting out the mid-thought guard…)')
 await sleep(12000)
-await page.evaluate(() => window.__bridge.requestTeaching('gate'))
+await page.evaluate(() => { void window.__bridge.requestTeaching('gate') })
 await waitSpeech(); await waitQuiet()
 let s = await store()
 check('teacher returned a decision', !!s.speech, `${s.speech?.kind} / ${s.speech?.source}`)
@@ -103,7 +108,7 @@ check('ask logged as an ask event',
 // ----------------------------------------------- "just tell me" descends a tier
 await page.evaluate(() => { window.__store.getState().set({ askedForAnswer: 0, tier: 1 }) })
 for (let i = 0; i < 3; i++) {
-  await page.evaluate(() => window.__teaching.askTeacherQuestion('just tell me the answer'))
+  await page.evaluate(() => { void window.__teaching.askTeacherQuestion('just tell me the answer') })
   await waitQuiet(40000); await sleep(300)
 }
 s = await store()
@@ -147,7 +152,7 @@ const grabBody = (r) => {
 page.on('request', grabBody)
 await runAndWait('nums = [3, 7, 12, 5]\nfor n in nums:\n    print(n * 99)\n')
 sent.length = 0
-await page.evaluate(() => window.__bridge.requestTeaching('ask', 'is this right?'))
+await page.evaluate(() => { void window.__bridge.requestTeaching('ask', 'is this right?') })
 await waitQuiet(40000); await sleep(600)
 page.off('request', grabBody)
 const body = sent[0]
@@ -182,7 +187,7 @@ page.on('request', (r) => {
 // Tier 4 is the first rung with a worked example, so it is the one that proves
 // the scratch pane survives the override too.
 await page.evaluate(() => window.__store.getState().set({ tier: 4 }))
-await page.evaluate(() => window.__bridge.requestTeaching('gate'))
+await page.evaluate(() => { void window.__bridge.requestTeaching('gate') })
 await waitQuiet(20000); await sleep(800)
 s = await store()
 check('a tool the server overruled is re-labelled, not left as the model sent it',
@@ -202,7 +207,7 @@ teachMode = 'dead'
 await setDoc('nums = [3, 7, 12, 5]\nfor n in nums:\n    total = 0\n    total = total + n\n')
 await sleep(900)
 await page.evaluate(() => window.__store.getState().set({ tier: 3, speech: null }))
-await page.evaluate(() => window.__bridge.requestTeaching('gate'))
+await page.evaluate(() => { void window.__bridge.requestTeaching('gate') })
 await waitQuiet(20000); await sleep(600)
 s = await store()
 check('backend unreachable falls back to the pre-written rung',
