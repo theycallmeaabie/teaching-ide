@@ -79,3 +79,45 @@ def leaks(text: str, tier: int, tier_texts: list[str]) -> str | None:
             if re.search(rf"\b{re.escape(value)}\b", window):
                 return f"{name} … {value}"
     return None
+
+
+# --------------------------------------------------------------- instructions
+
+#: Verbs that tell someone to DO something to their program. At the first two
+#: rungs a teacher describes where to look and what is wrong; once it says
+#: "create a variable before the loop, then add each number to it" it has said
+#: the whole solution in words, and no code fragment appears for `leaks` to
+#: find. Measured on the live model: the first hint it gave on the accumulator
+#: exercise did exactly this.
+_ACTIONS = (
+    r"create|creating|add|adding|move|moving|put|putting|set|setting|write|writing|"
+    r"change|changing|replace|replacing|insert|inserting|declare|declaring|"
+    r"define|defining|initiali[sz]e|initiali[sz]ing|assign|assigning|"
+    r"start with|starting with"
+)
+
+#: An action verb is an instruction when it opens a sentence or follows a
+#: connective that carries one ("then add", "you need to put", "try creating").
+#: Mid-sentence description — "line 4 adds the number" — is not matched, because
+#: describing what code does is the job.
+_INSTRUCTION = re.compile(
+    rf"(?:^|[.!?:]\s+|\b(?:then|and|also|just|first|next|should|must|need to|have to|try to|try|by)\s+)"
+    rf"(?P<verb>{_ACTIONS})\b",
+    re.IGNORECASE,
+)
+
+#: Rungs 3 and up may explain the mechanism; rungs 1 and 2 may not instruct.
+_INSTRUCTION_FREE_TIERS = 2
+
+
+def instructs(text: str, tier: int) -> str | None:
+    """Return the instruction found, or None.
+
+    The hand-written ladder holds itself to the same rule — see
+    `/api/check-ladder` — so this is not a stricter standard than the one the
+    lesson was written to, only the same one applied to the model.
+    """
+    if tier > _INSTRUCTION_FREE_TIERS:
+        return None
+    m = _INSTRUCTION.search(" ".join(text.split()))
+    return m.group(0).strip(" .!?:").lower() if m else None

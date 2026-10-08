@@ -80,22 +80,29 @@ src/
   lesson/               content and progression
     exercises.ts          20 exercises × 5 hint tiers; isCorrect(); indexOfExercise()
     teaching.ts           submitRun, askTeacherQuestion, goToExercise
+    profile.ts            pure: per-exercise stats → who this learner has been so far
   teacher/              talking to the server
     bridge.ts             requestTeaching: assemble context, stream, apply, fall back
     client.ts             fetch + hand-rolled SSE parser; translateError
+    escalation.ts         pure: did the last hint land? (unchanged code → climb a rung)
     health.ts             /api/health → degraded flag for the top bar
+  auth/                 Supabase client; sign-in lifecycle; resetting for the next learner
+  data/                 progress.ts (per-exercise row: ladder, conversation, mistakes),
+                        sessions.ts (the observer's event log, written server-side)
   editor/
     Editor.tsx            CodeMirror 6 mount; doc swap on exercise change
     teacherWidget.ts      StateField + block widget that renders speech in-editor
-  ui/                   LessonBar, OutputPane, AskBox, ScratchPane, DevPanel
+  ui/                   LessonBar, OutputPane, AskBox, Conversation, ScratchPane, DevPanel, AuthBar
 
 server/
   main.py               FastAPI app; the four endpoints
   models.py             pydantic request/response shapes
   llm.py                the only provider-aware module (AsyncOpenAI)
   prompts.py            SYSTEM prompt + build_context()
-  tools.py              the five tool schemas
-  leakguard.py          answer-leak detection derived from tier-5 text
+  tools.py              the six tool schemas (give_hint, explain, ask_question, …)
+  leakguard.py          answer-leak detection derived from tier-5 text; instructions at rungs 1–2
+  quota.py              per-caller rate limits; per-sitting interruption budget
+  auth.py               Supabase JWT verification (anonymous when unconfigured)
   errors.py             regex → plain-English error dictionary
   cache.py              sha256(context) → server/.cache/*.json
   validate_tools.py     30-call tool-calling reliability gate + behaviour probes
@@ -411,12 +418,22 @@ Request (`models.TeachRequest`):
 
 ```
 doc_version, buffer, exercise_id, exercise_prompt, expected_stdout,
+exercise_concept, exercise_section,
 tier (1–5), tier_texts[5], attempts,
 last_run {ok, stdout, error?, correct} | null,
 misconceptions[], misconception_notes[],
 asked_for_answer, idle_ms, last_edit_ms_ago, stuck_score,
-trigger ('gate'|'ask'|'success'), learner_question, recent[≤3]
+trigger ('gate'|'ask'|'success'), learner_question,
+recent[≤40]   (the conversation on this exercise; the prompt shows the last 8),
+profile | null   (solved, struggled, recurring, comfortable, begs),
+previous_hint_failed, session_id
 ```
+
+Before the pipeline, `quota.check` decides whether the call may be answered at
+all: a per-caller rate limit and daily cap (cost), and a per-sitting interruption
+budget (courtesy). A refused call is *answered* — the pre-written rung for a rate
+limit, `stay_silent` for a spent budget — never rejected, so the lesson cannot
+stall. Cached answers skip the rate limits but not the budget.
 
 Pipeline inside `gen()`:
 

@@ -1,68 +1,132 @@
 """The teacher's instructions and the per-call context.
 
-The ladder is not the model's to decide. The tier comes in, the tier goes out;
-the model's job is the phrasing, not the pedagogy.
+Two jobs, kept apart on purpose:
+
+  - TEACH, freely. A learner who asks what a loop variable is, or why a colon
+    is there, should get an actual explanation, pitched at them and remembering
+    what has already been said.
+  - GUARD, strictly, one thing: the answer to the exercise in front of them.
+
+The ladder is the guard's measuring stick. The tier comes in, the tier goes
+out, and the rung for that tier is a ceiling on how much may be revealed. It is
+not a script — the model's job is to say it for this learner, in this code.
 """
 
 from __future__ import annotations
 
-from .models import TeachRequest
+from .models import LearnerProfile, TeachRequest
 
 SYSTEM = """\
-You are a teacher sitting beside someone writing their first ever Python \
-program. They are learning one thing: a `for` loop over a list, building up to \
-an accumulator. Nothing else.
+You are a patient Python teacher sitting beside someone writing their first \
+programs. They work through a ramp of small exercises — printing, variables, \
+strings, conditions, lists, loops, dictionaries, functions. Each call tells you \
+which exercise they are on and what it is about.
 
 You speak through tools. Call exactly one.
 
-Hard rules:
-- NEVER write code into the learner's buffer, and never present a complete \
-solution as something to paste. Worked examples belong in the scratch buffer \
-and use a DIFFERENT problem from theirs.
-- NEVER give the answer before tier 5, no matter how they ask.
-- You are told the current tier. If you call give_hint, `tier` must be exactly \
-that number. You are shown every rung so you know where the ladder is going — \
-you may only reveal as much as the CURRENT rung does. The later rungs are not \
-yours to use.
-- Below tier 5, never write out the literal code they have to type. Not \
-`total = 0`, not `total = total + n`, not any of it. Describe where to look and \
-what is wrong; let them write the line. A hint they can paste is not a hint.
-- Your hint is the CURRENT rung, re-said in words that fit the code actually in \
-front of them, with their real line numbers. If it carries information the \
-current rung does not, you have gone a rung too far.
-- If the context says they last typed fewer than 10 seconds ago, you MUST call \
-stay_silent. They are still mid-thought, and interrupting someone mid-thought is \
-the single worst thing this system can do — however stuck they look. The one \
-exception is when they have asked you something directly; answer them then, \
-whenever they typed.
-- Two to three sentences. Maximum. A teacher lecturing a beginner is failing.
-- Speak plainly. No praise padding, no "Great question!", no exclamation marks.
+You are a teacher first. You are a guard on exactly one thing: the answer to the \
+exercise in front of them. Everything else you may teach freely.
 
-Judgement — when to call stay_silent, which is a real and correct answer:
-- They typed in the last 10 seconds. They are mid-thought. Say nothing.
+Teaching:
+- If they ask what something is or how it works — an idea, a keyword, an error \
+message — explain it, with `explain`. Plain words. A tiny example on a DIFFERENT \
+problem from theirs if it helps; never an example that solves theirs.
+- Pitch it to this person. You are told who they have been so far: what took \
+them effort, what keeps tripping them, what came easily. Use it. Tie a new idea \
+to one they already got. Never mention the profile itself.
+- You can see the conversation so far on this exercise. Do not repeat yourself. \
+If they did not understand, say it another way — a smaller step, a different \
+angle — not the same sentence again.
+- Two to three sentences for a hint. Up to five for an explanation. A lecture \
+is a failure. Speak plainly: no praise padding, no "Great question!", no \
+exclamation marks.
+
+The answer:
+- NEVER write the code they have to type for THIS exercise, or anything they \
+could paste to pass it, before tier 5 — however they ask. Describe where to look \
+and what is wrong; let them write the line. A hint they can paste is not a hint.
+- NEVER write code into their buffer. Worked examples go in the scratch pane, on \
+a DIFFERENT problem.
+- You are told the current tier and shown all five rungs. The CURRENT rung is a \
+ceiling on what you may reveal, not a script: say it for them, with their real \
+variable names and line numbers, speaking to what they actually did. If you \
+carry information the current rung does not, you have gone a rung too far. If \
+their code gives you nothing to point at, the rung's own wording is fine.
+- If you call give_hint, `tier` must be exactly the current tier.
+
+When to say nothing — stay_silent is a real and correct answer:
+- If they last typed fewer than 10 seconds ago and did not ask you anything, you \
+MUST stay silent. Interrupting someone mid-thought is the single worst thing \
+this system can do, however stuck they look. If they asked you directly, answer \
+them, whenever they typed.
 - Their code changed meaningfully since the last failure and they have not run \
 it yet. Let them run it.
 - They are one small step from working and clearly heading there.
-The `reason` you give is read by a human tuning this system, so make it specific \
-about what you saw, not "the learner seems fine".
-- If they ask you to just tell them the answer: do not refuse flatly, that reads \
-as obstinate. Redirect gently and ask ONE concrete question about their own code.
-- If they succeeded: confirm in one sentence, then usually ask why it worked. \
-Do not let a success pass unexamined.
-- If they ask something off-topic: answer honestly in one sentence, then return \
-to the loop. Dismissing them costs more trust than the digression costs focus.
+Your `reason` is read by a human tuning this system: say what you saw, not \
+"the learner seems fine".
+
+Choosing the tool:
+- give_hint — they are stuck on their code and the observer has noticed, or \
+they asked for help with it.
+- explain — they asked about an idea, not about their own code.
+- ask_question — they asked to simply be told the answer. Do not refuse flatly, \
+that reads as obstinate: ask ONE concrete question about their own code instead.
+- translate_error — an error you were not told the meaning of.
+- confirm_success — they solved it. Confirm in one sentence, then usually ask \
+why it worked. If it connects to something they struggled with earlier, say so.
+- stay_silent — see above.
+- If they ask something unrelated, answer honestly in one sentence and bring \
+them back. Dismissing them costs more trust than the digression costs focus.
 """
+
+#: Turns of conversation shown to the model. The client keeps more.
+THREAD_TURNS = 8
+#: A teacher turn can be long; the model needs the gist, not the whole thing.
+TURN_CHARS = 320
+
+
+def render_profile(p: LearnerProfile | None) -> list[str]:
+    """A few lines about who this is. Empty when there is nothing to say yet —
+    a first-time learner has no profile, and inventing one would be worse."""
+    if p is None:
+        return []
+    out: list[str] = []
+    if p.total and p.solved:
+        out.append(f"Solved {p.solved} of {p.total} exercises so far.")
+    if p.comfortable:
+        out.append(f"Came easily: {', '.join(p.comfortable)}.")
+    if p.struggled:
+        out.append(f"Took real effort: {'; '.join(p.struggled)}.")
+    if p.recurring:
+        out.append(f"Keeps making the same mistake: {'; '.join(p.recurring)}.")
+    if p.begs >= 3:
+        out.append(f"Often asks to simply be told the answer ({p.begs} times).")
+    return out
+
+
+def _clip(s: str, n: int = TURN_CHARS) -> str:
+    s = " ".join(s.split())
+    return s if len(s) <= n else s[: n - 1].rstrip() + "…"
 
 
 def build_context(r: TeachRequest) -> str:
     """The user message. Every line here is paid for on every call."""
     lines: list[str] = []
 
-    lines.append(f"EXERCISE: {r.exercise_prompt}")
+    head = f"EXERCISE ({r.exercise_section}): " if r.exercise_section else "EXERCISE: "
+    lines.append(f"{head}{r.exercise_prompt}")
+    if r.exercise_concept:
+        lines.append(f"It is about: {r.exercise_concept}.")
     lines.append(f"It should print exactly:\n{r.expected_stdout}")
     lines.append("")
 
-    buf = r.buffer.split("\n")[:20]
+    profile = render_profile(r.profile)
+    if profile:
+        lines.append("WHO THEY ARE SO FAR:")
+        lines.extend(f"- {p}" for p in profile)
+        lines.append("")
+
+    buf = r.buffer.split("\n")[:30]
     numbered = "\n".join(f"{i + 1}| {t}" for i, t in enumerate(buf))
     lines.append(f"THEIR CODE RIGHT NOW:\n{numbered}")
     lines.append("")
@@ -97,14 +161,22 @@ def build_context(r: TeachRequest) -> str:
 
     lines.append(f"CURRENT TIER: {r.tier}")
     for i, t in enumerate(r.tier_texts, start=1):
-        mark = "  <-- you are here, say no more than this" if i == r.tier else ""
+        mark = "  <-- you are here: the ceiling on what you may reveal" if i == r.tier else ""
         lines.append(f"  tier {i}: {t}{mark}")
     lines.append("")
 
     if r.recent:
-        lines.append("LAST FEW EXCHANGES:")
-        for x in r.recent[-3:]:
-            lines.append(f"  {x.role}: {x.text}")
+        lines.append("THE CONVERSATION ON THIS EXERCISE SO FAR (oldest first):")
+        for x in r.recent[-THREAD_TURNS:]:
+            who = "you" if x.role == "teacher" else "them"
+            lines.append(f"  {who}: {_clip(x.text)}")
+        lines.append("")
+
+    if r.previous_hint_failed:
+        lines.append(
+            "YOUR LAST HINT DID NOT LAND: their code is unchanged since you gave it. "
+            "Do not say it again. Come at it from a different angle."
+        )
         lines.append("")
 
     if r.trigger == "ask" and r.learner_question:

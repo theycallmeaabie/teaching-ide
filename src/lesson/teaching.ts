@@ -1,9 +1,9 @@
 import { runner } from '../exec/runner'
 import * as observer from '../observer/observer'
 import { useStore } from '../store'
-import { explainError, isAskingForAnswer, requestTeaching } from '../teacher/bridge'
+import { cancelTeaching, explainError, isAskingForAnswer, requestTeaching } from '../teacher/bridge'
 import type { RunResult } from '../types'
-import { saveProgress, savedFor } from '../data/progress'
+import { saveProgress, savedFor, THREAD_CAP } from '../data/progress'
 import { EXERCISES, isCorrect } from './exercises'
 
 /** Three "just tell me"s descend a rung. Not a refusal, but not free either. */
@@ -41,11 +41,14 @@ export async function submitRun(result: RunResult, source: string) {
   // be worse than silence.
   const watched = new Set(exercise.watch.map((w) => w.id))
   const misconceptions = detected.filter((m) => watched.has(m.id))
+  // Remembered per exercise so the same mistake turning up in a second one can
+  // be recognised as a habit, which is what a teacher actually wants to know.
+  const seen = [...new Set([...s.seen, ...misconceptions.map((m) => m.id)])]
 
   if (correct) {
     const solved = [...s.solved]
     solved[index] = true
-    s.set({ solved, misconceptions, speech: null })
+    s.set({ solved, misconceptions, seen, speech: null })
     observer.setTeachingState(s.tier, s.attempts)
     void saveProgress(index)
     // Do not let a success pass unexamined.
@@ -55,7 +58,7 @@ export async function submitRun(result: RunResult, source: string) {
 
   const attempts = s.attempts + 1
   const tier = s.hintsGiven > 0 ? Math.min(5, s.tier + 1) : s.tier
-  s.set({ attempts, tier, misconceptions })
+  s.set({ attempts, tier, misconceptions, seen })
   observer.setTeachingState(tier, attempts)
   void saveProgress(index)
 }
@@ -80,7 +83,7 @@ export async function askTeacherQuestion(text: string) {
   useStore.getState().set({
     askedForAnswer,
     tier,
-    recent: [...s.recent, { role: 'learner' as const, text: trimmed }].slice(-6),
+    recent: [...s.recent, { role: 'learner' as const, text: trimmed }].slice(-THREAD_CAP),
   })
   observer.setTeachingState(tier, s.attempts)
   void saveProgress(s.exerciseIndex)
@@ -91,11 +94,13 @@ export async function askTeacherQuestion(text: string) {
 export function goToExercise(index: number) {
   if (index < 0 || index >= EXERCISES.length) return
 
-  // Bank where they got to on the exercise being left before anything resets.
+  // Bank where they got to on the exercise being left before anything resets,
+  // and drop any answer still on its way: it is about code they are leaving.
   void saveProgress(useStore.getState().exerciseIndex)
+  cancelTeaching()
 
-  // Coming back to an exercise should not hand them tier 1 on a problem they
-  // have already had four hints about.
+  // Coming back to an exercise should not hand them tier 1 and a blank
+  // conversation on a problem they have already had four hints about.
   const saved = savedFor(EXERCISES[index].id)
 
   useStore.getState().set({
@@ -103,11 +108,14 @@ export function goToExercise(index: number) {
     attempts: saved?.attempts ?? 0,
     tier: saved?.tier ?? 1,
     hintsGiven: saved?.hints_given ?? 0,
+    askedForAnswer: saved?.begs ?? 0,
+    seen: saved?.seen ?? [],
+    recent: saved?.thread ?? [],
     speech: null,
     misconceptions: [],
     lastResult: null,
     errorPlain: null,
-    recent: [],
+    lastSilence: null,
   })
   observer.setStarter(EXERCISES[index].starter)
   observer.setTeachingState(saved?.tier ?? 1, saved?.attempts ?? 0)

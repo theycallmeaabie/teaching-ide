@@ -4,7 +4,7 @@ import { EXERCISES } from './lesson/exercises'
 import type { TeacherHealth } from './teacher/health'
 import type { AuthUser } from './auth/supabase'
 
-export type SpeechKind = 'hint' | 'question' | 'error' | 'success'
+export type SpeechKind = 'hint' | 'question' | 'explain' | 'error' | 'success'
 
 /** Everything the teacher is currently saying. One at a time, never modal. */
 export type Speech = {
@@ -30,15 +30,23 @@ type AppState = {
   errorPlain: string | null
 
   exerciseIndex: number
+  /** Bumped when a different person takes over, so the editor swaps its buffer
+   *  even though the exercise has not changed — otherwise the last learner's
+   *  code would still be on screen. */
+  bufferEpoch: number
   attempts: number
   tier: number
   hintsGiven: number
   speech: Speech | null
   misconceptions: Misconception[]
   solved: boolean[]
-  /** How many times they have asked to just be told. Three descends a tier. */
+  /** How many times they have asked to just be told, on THIS exercise. Three
+   *  descends a tier. Summed across exercises for the learner profile. */
   askedForAnswer: number
-  /** Last three only — never the full transcript. */
+  /** Misconception ids detected on this exercise, once each. */
+  seen: string[]
+  /** The conversation on this exercise, oldest first. Kept whole — the teacher
+   *  is shown the tail of it, and it is saved so it survives a refresh. */
   recent: Interaction[]
   teacherBusy: boolean
   /** Why the teacher chose silence, for the dev panel. */
@@ -53,6 +61,8 @@ type AppState = {
   /** Saved progress has been read back. Until then, do not write it out —
    *  an empty store would overwrite real rows with blanks. */
   progressLoaded: boolean
+  /** Why progress is not being kept, in words for the learner. Null when it is. */
+  progressError: string | null
 
   setRunnerStatus: (s: RunnerStatus) => void
   setLastResult: (r: RunResult | null) => void
@@ -67,6 +77,7 @@ export const useStore = create<AppState>((set) => ({
   errorPlain: null,
 
   exerciseIndex: 0,
+  bufferEpoch: 0,
   attempts: 0,
   tier: 1,
   hintsGiven: 0,
@@ -74,6 +85,7 @@ export const useStore = create<AppState>((set) => ({
   misconceptions: [],
   solved: EXERCISES.map(() => false),
   askedForAnswer: 0,
+  seen: [],
   recent: [],
   teacherBusy: false,
   lastSilence: null,
@@ -82,6 +94,7 @@ export const useStore = create<AppState>((set) => ({
   user: null,
   authReady: false,
   progressLoaded: false,
+  progressError: null,
 
   setRunnerStatus: (runnerStatus) => set({ runnerStatus }),
   setLastResult: (lastResult) => set({ lastResult }),

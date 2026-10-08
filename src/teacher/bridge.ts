@@ -2,10 +2,34 @@ import * as observer from '../observer/observer'
 import { EXERCISES, isCorrect } from '../lesson/exercises'
 import { useStore, type Interaction, type Speech, type SpeechKind } from '../store'
 import { askTeacher, runResultForWire, translateError, type TeacherDecision } from './client'
+import { escalatedTier, hashBuffer, lastHintFailed, type LastHint } from './escalation'
 import { fetchHealth } from './health'
+import { learnerProfile, saveProgress, THREAD_CAP } from '../data/progress'
 
 let speechId = 0
 let inFlight: AbortController | null = null
+
+/** One per page load. Lets the server count a sitting's interruptions itself,
+ *  rather than trusting the browser's tally. Not a secret and not an identity —
+ *  `randomUUID` only exists in secure contexts, hence the fallback. */
+const SESSION_ID: string =
+  globalThis.crypto?.randomUUID?.() ??
+  `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+
+/** The last hint given on each exercise, and the code it was given against. */
+const lastHints = new Map<string, LastHint>()
+
+/** How much of the conversation goes over the wire. The store keeps more. */
+const WIRE_TURNS = 12
+
+/** Called when the learner leaves an exercise: an answer that arrives later is
+ *  about code they are no longer looking at. */
+export function cancelTeaching() {
+  inFlight?.abort()
+  inFlight = null
+  stopReveal()
+  useStore.getState().set({ teacherBusy: false })
+}
 
 /** Phrases that mean "stop teaching me and just tell me". */
 const BEGGING =
@@ -91,6 +115,7 @@ export function materiallyChanged(
 
 const KIND: Record<string, SpeechKind> = {
   give_hint: 'hint',
+  explain: 'explain',
   ask_question: 'question',
   translate_error: 'error',
   confirm_success: 'success',
@@ -125,10 +150,25 @@ export async function requestTeaching(
   inFlight?.abort()
   inFlight = new AbortController()
 
+  const index = st.exerciseIndex
   const buffer = observer.doc() || exercise.starter
   const version = observer.version()
-  const tier = st.tier
   const solvedBefore = st.solved[st.exerciseIndex]
+
+  // Did the last hint land? If the code is exactly what it was when the hint
+  // was given, it did not — and saying it again, however it is phrased, is the
+  // one move that is certainly wrong. The observer reopening the gate on
+  // unchanged code climbs a rung; a question is answered where the ladder is.
+  const last = lastHints.get(exercise.id)
+  const previousFailed = lastHintFailed(last, buffer)
+  let tier = st.tier
+  if (previousFailed && trigger === 'gate' && last) {
+    tier = escalatedTier(st.tier, last)
+    if (tier !== st.tier) {
+      st.set({ tier })
+      observer.setTeachingState(tier, st.attempts)
+    }
+  }
 
   // Whether THIS run was right, which is not the same question as whether the
   // exercise has ever been solved. Conflating them tells the model "correct, it
@@ -149,6 +189,7 @@ export async function requestTeaching(
   revealDone = false
 
   const open = (kind: SpeechKind, tierValue: number | null) => {
+    if (useStore.getState().exerciseIndex !== index) return
     const scratch =
       kind === 'hint' && tierValue != null ? exercise.hints[tierValue - 1]?.scratch : undefined
 
@@ -187,6 +228,8 @@ export async function requestTeaching(
       exercise_id: exercise.id,
       exercise_prompt: exercise.prompt,
       expected_stdout: exercise.expectedStdout,
+      exercise_concept: exercise.concept,
+      exercise_section: exercise.section,
       tier,
       tier_texts: exercise.hints.map((h) => h.text),
       attempts: st.attempts,
@@ -199,7 +242,10 @@ export async function requestTeaching(
       stuck_score: observer.currentScore(),
       trigger,
       learner_question: learnerQuestion,
-      recent: st.recent.slice(-3),
+      recent: st.recent.slice(-WIRE_TURNS),
+      profile: learnerProfile(),
+      previous_hint_failed: previousFailed,
+      session_id: SESSION_ID,
     },
     {
       onTool: (tool) => {
@@ -214,6 +260,12 @@ export async function requestTeaching(
   )
 
   useStore.getState().set({ teacherBusy: false })
+
+  // They moved to another exercise while this was in flight.
+  if (useStore.getState().exerciseIndex !== index) {
+    stopReveal()
+    return
+  }
   // Refresh after every call: this is when degradation actually shows up.
   void fetchHealth().then((health) => useStore.getState().set({ health }))
 
@@ -262,7 +314,12 @@ export async function requestTeaching(
         ...s,
         targetLine: line,
         source: decision.source,
-        followup: (decision.args.followup_question as string | undefined) ?? null,
+        followup: (decision.args.followup_question as string | undefined) || null,
+        // An explanation's example goes beside their code, never into it.
+        scratch:
+          decision.tool === 'explain'
+            ? String(decision.args.example ?? '').trim() || undefined
+            : s.scratch,
       },
       // Why the backend had to fall back is the most useful thing it tells us.
       lastSilence: decision.note ?? (decision.cached ? 'replayed from cache' : null),
@@ -271,11 +328,13 @@ export async function requestTeaching(
 
   const interaction: Interaction = { role: 'teacher', text: prose }
   useStore.getState().set({
-    recent: [...useStore.getState().recent, interaction].slice(-6),
+    recent: [...useStore.getState().recent, interaction].slice(-THREAD_CAP),
     hintsGiven: useStore.getState().hintsGiven + (kind === 'hint' ? 1 : 0),
   })
+  if (kind === 'hint') lastHints.set(exercise.id, { hash: hashBuffer(observer.doc()), tier })
   observer.noteTeacherSpoke(trigger === 'gate')
   observer.setTeachingState(tier, useStore.getState().attempts)
+  void saveProgress(index)
 }
 
 /**
@@ -299,7 +358,9 @@ function fallbackToPrewritten(id: number, trigger: string, note: string) {
   }
   const h = exercise.hints[st.tier - 1]
   if (!h) return
+  lastHints.set(exercise.id, { hash: hashBuffer(observer.doc()), tier: st.tier })
   st.set({
+    recent: [...st.recent, { role: 'teacher' as const, text: h.text }].slice(-THREAD_CAP),
     speech: {
       id,
       kind: 'hint',
@@ -314,6 +375,7 @@ function fallbackToPrewritten(id: number, trigger: string, note: string) {
     lastSilence: note,
   })
   observer.noteTeacherSpoke(trigger === 'gate')
+  void saveProgress(st.exerciseIndex)
 }
 
 /** Error translation is a dictionary lookup: instant, free, and not gated. */

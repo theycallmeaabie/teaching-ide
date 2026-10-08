@@ -1,0 +1,8 @@
+# The server's runtime dependencies. `npm run api` and the Docker image both
+# install from this file; the lines below are what the code imports directly,
+# with the versions this was built and tested against.
+fastapi==0.141.1
+uvicorn[standard]==0.53.0
+openai==3.14.1
+python-dotenv==1.2.3
+PyJWT[crypto]==2.15.1

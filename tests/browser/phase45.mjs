@@ -1,7 +1,9 @@
 import puppeteer from 'puppeteer-core'
+import { watchReloads } from '../support/reload-guard.mjs'
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const b = await puppeteer.launch({ executablePath: process.env.CHROME || '/usr/bin/google-chrome', headless: 'new', args: ['--no-sandbox', '--disable-dev-shm-usage'] })
 const page = await b.newPage()
+const reloads = watchReloads(page, 1)
 await page.setViewport({ width: 1560, height: 950 })
 const errors = []
 page.on('pageerror', (e) => errors.push('pageerror: ' + e.message))
@@ -191,6 +193,12 @@ check('the override reason reaches the dev panel',
 
 // ------------------------------------------- the lesson survives a dead backend
 teachMode = 'dead'
+// A real learner has edited something between two asks. On byte-identical code
+// the teacher assumes its last hint did not land and climbs a rung — which is
+// the point, and tested below — so this step needs different code to be asking
+// the question it means to: "what does the fallback serve at tier 3?"
+await setDoc('nums = [3, 7, 12, 5]\nfor n in nums:\n    total = 0\n    total = total + n\n')
+await sleep(900)
 await page.evaluate(() => window.__store.getState().set({ tier: 3, speech: null }))
 await page.evaluate(() => window.__bridge.requestTeaching('gate'))
 await waitQuiet(20000); await sleep(600)
@@ -205,6 +213,10 @@ check('the reason is recorded for the dev panel',
   /unreachable/.test((await store()).lastSilence ?? ''), (await store()).lastSilence)
 
 // ------------------------------------------------------------- dev panel
+// Closed by default — it is the researcher's instrument, not the learner's UI.
+check('dev panel starts closed', !(await page.$('.devpanel')))
+await page.evaluate(() => [...document.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Observer').click())
+await page.waitForSelector('.devpanel')
 check('dev panel reports where the words came from',
   (await page.$eval('.devpanel', n => n.innerText)).includes('words from'))
 
@@ -226,8 +238,16 @@ for (const ex of ladder) {
   check(`pre-written ladder for "${ex.id}" never leaks early`, bad.length === 0,
     bad.length ? JSON.stringify(bad) : `guards: ${JSON.stringify(ex.forbidden)}`)
 }
+// The model is held to "rungs 1 and 2 say where to look, not what to do". The
+// lesson's own rungs have to meet the same standard, or the guard would be
+// stricter than the content it protects.
+for (const ex of ladder) {
+  const told = Object.entries(ex.instructs ?? {}).filter(([, v]) => v)
+  check(`pre-written ladder for "${ex.id}" never instructs in its first two rungs`, told.length === 0, JSON.stringify(told))
+}
 
 // Aborting /api/teach is how the backend-down case is simulated above.
+check('the page was not reloaded by the dev server mid-run', reloads() === 0, reloads.detail())
 const real = errors.filter(e => !e.includes('net::ERR_FAILED'))
 check('no uncaught page errors', real.length === 0, real.join(' | ').slice(0, 200))
 await b.close()

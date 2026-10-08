@@ -10,18 +10,28 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+from pathlib import Path
 from typing import Any, AsyncIterator
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from fastapi.staticfiles import StaticFiles
 
-from . import auth, cache, errors, leakguard, llm
+from . import auth, cache, errors, leakguard, llm, quota
 from .models import RunErrorIn, TeachRequest
 from .prompts import SYSTEM, build_context
 from .tools import TOOLS, TOOL_NAMES
 
-app = FastAPI(title="Teaching IDE")
+# The interactive API docs describe every endpoint to anyone who asks. Fine on a
+# laptop, not something to publish — opt in with ENABLE_DOCS=1.
+_DOCS = os.environ.get("ENABLE_DOCS", "0") == "1"
+app = FastAPI(
+    title="Teaching IDE",
+    docs_url="/docs" if _DOCS else None,
+    redoc_url="/redoc" if _DOCS else None,
+    openapi_url="/openapi.json" if _DOCS else None,
+)
 
 # In development Vite proxies /api, so same-origin and this never comes up. It
 # matters the moment a built bundle is served from anywhere else: without it
@@ -47,6 +57,7 @@ REQUIRED_ARGS = {
     "ask_question": ["text"],
     "translate_error": ["plain_english"],
     "confirm_success": ["text"],
+    "explain": ["text"],
     "stay_silent": ["reason"],
 }
 
@@ -102,10 +113,20 @@ def sanitise(req: TeachRequest, tool: str | None, args: Any) -> tuple[dict[str, 
         if args.get("tier") != req.tier:
             args = {**args, "tier": req.tier, "_clamped_from": args.get("tier")}
 
+    # Rungs 1 and 2 say where to look, never what to do. "Create the total
+    # before the loop, then add each number" is the whole solution in words, and
+    # there is no code in it for the fragment check below to find. Concept
+    # explanations are exempt — teaching is free; this is about their exercise.
+    if tool in ("give_hint", "ask_question"):
+        told = leakguard.instructs(str(args.get("text", "")), req.tier)
+        if told:
+            return None, f"tier {req.tier} {tool} told them what to do ({told!r})"
+
     # The ladder applies to everything the teacher says, not just hints. A
     # "question" that spells out the fix is the answer wearing a question mark.
     prose = " ".join(
-        str(args.get(k, "")) for k in ("text", "plain_english", "followup_question")
+        str(args.get(k, ""))
+        for k in ("text", "plain_english", "followup_question", "example")
     )
     if prose.strip():
         leaked = leakguard.leaks(prose, req.tier, req.tier_texts)
@@ -129,22 +150,50 @@ async def replay(payload: dict[str, Any]) -> AsyncIterator[str]:
 @app.post("/api/teach")
 async def teach(
     req: TeachRequest,
+    request: Request,
     user_id: str | None = Depends(auth.current_user),
 ) -> StreamingResponse:
-    # Identity is observed, not required: an anonymous call is served exactly as
-    # before. It is here so the budget can be enforced server-side later —
-    # today the 8-interruption limit is client-side only.
-    _ = user_id
     system = SYSTEM
     context = build_context(req)
     ck = cache.key(llm.MODEL, system, context)
+    who = quota.principal(user_id, request)
+
+    # A cached answer costs the provider nothing, so it is not rate-limited —
+    # but the interruption budget is about the learner, and applies regardless.
+    hit = cache.get(ck)
+    verdict = quota.check(who, req.session_id, req.trigger, billable=hit is None)
+
+    def spoke(payload: dict[str, Any]) -> None:
+        if payload.get("tool") != "stay_silent":
+            quota.note_spoke(who, req.session_id, req.trigger)
 
     async def gen() -> AsyncIterator[str]:
+        # Refused calls are answered, not rejected: the lesson never stalls, and
+        # a learner is never shown an error for something that is not theirs.
+        if not verdict.ok:
+            if verdict.kind == "budget":
+                payload = {
+                    "tool": "stay_silent",
+                    "args": {"reason": verdict.reason},
+                    "source": "prewritten",
+                    "note": verdict.reason,
+                    "doc_version": req.doc_version,
+                }
+            else:
+                payload = prewritten(req, verdict.reason or "rate limited")
+                payload["doc_version"] = req.doc_version
+                yield sse("fallback", {"note": payload["note"]})
+            spoke(payload)
+            async for chunk in replay(payload):
+                yield chunk
+            return
+
         # Same context as last time means the same answer. During tuning that is
         # most calls, and the daily cap is about two sessions' worth of tokens.
-        hit = cache.get(ck)
         if hit is not None:
-            async for chunk in replay({**hit, "doc_version": req.doc_version, "cached": True}):
+            payload = {**hit, "doc_version": req.doc_version, "cached": True}
+            spoke(payload)
+            async for chunk in replay(payload):
                 yield chunk
             return
 
@@ -165,6 +214,7 @@ async def teach(
             payload = prewritten(req, f"{type(e).__name__}: {str(e)[:120]}")
             payload["doc_version"] = req.doc_version
             yield sse("fallback", {"note": payload["note"]})
+            spoke(payload)
             async for chunk in replay(payload):
                 yield chunk
             return
@@ -174,12 +224,14 @@ async def teach(
             payload = prewritten(req, why or "unusable response")
             payload["doc_version"] = req.doc_version
             yield sse("fallback", {"note": payload["note"]})
+            spoke(payload)
             async for chunk in replay(payload):
                 yield chunk
             return
 
         payload = {**clean, "source": "llm", "note": None, "doc_version": req.doc_version}
         cache.put(ck, {"tool": payload["tool"], "args": payload["args"], "source": "llm", "note": None})
+        spoke(payload)
         yield sse("done", payload)
 
     return StreamingResponse(gen(), media_type="text/event-stream")
@@ -210,6 +262,11 @@ async def check_ladder(payload: dict) -> dict[str, Any]:
             str(i): leakguard.leaks(t, i, texts)
             for i, t in enumerate(texts, start=1)
         },
+        # The first two rungs are held to "where to look, not what to do" too.
+        "instructs": {
+            str(i): leakguard.instructs(t, i)
+            for i, t in enumerate(texts, start=1)
+        },
     }
 
 
@@ -223,3 +280,21 @@ async def health() -> dict[str, Any]:
         "cache": cache.stats(),
         "llm": llm.last_outcome,
     }
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    resp = await call_next(request)
+    resp.headers.setdefault("X-Content-Type-Options", "nosniff")
+    resp.headers.setdefault("Referrer-Policy", "same-origin")
+    resp.headers.setdefault("X-Frame-Options", "DENY")
+    return resp
+
+
+# One deployable: with a built bundle present, the API serves the app too, so
+# there is no second origin, no CORS to get right, and no proxy to configure.
+# Mounted last so every /api route above takes precedence. In development there
+# is no dist/ worth serving and Vite does it instead.
+DIST = Path(__file__).resolve().parent.parent / "dist"
+if (DIST / "index.html").is_file():
+    app.mount("/", StaticFiles(directory=DIST, html=True), name="web")

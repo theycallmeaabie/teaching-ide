@@ -16,6 +16,9 @@ integers with 0 meaning "no single line" — the model always has something
 legal to emit, and null is unreachable. The client reads anything below 1 as
 no line. Nothing nests, and nothing is required that the model could not
 answer.
+
+`explain` follows the same rule: its `example` and `followup_question` are
+required strings, empty when unused, never optional and never null.
 """
 
 TOOLS = [
@@ -65,6 +68,42 @@ TOOLS = [
                     "text": {"type": "string", "description": "One question. Two sentences at most."}
                 },
                 "required": ["text"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "explain",
+            "description": (
+                "Explain an idea they asked about — what a keyword is, how a "
+                "concept works, why something behaves as it does. This is "
+                "teaching, and teaching is free. What is NOT free is the answer "
+                "to their exercise: never explain in a way that hands it over."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "text": {
+                        "type": "string",
+                        "description": "Up to five sentences. Plain words, for a beginner.",
+                    },
+                    "example": {
+                        "type": "string",
+                        "description": (
+                            "A tiny code example on a DIFFERENT problem from theirs, "
+                            "or an empty string if none would help."
+                        ),
+                    },
+                    "followup_question": {
+                        "type": "string",
+                        "description": (
+                            "One short question to check it landed, or an empty "
+                            "string if it is not needed."
+                        ),
+                    },
+                },
+                "required": ["text", "example", "followup_question"],
             },
         },
     },

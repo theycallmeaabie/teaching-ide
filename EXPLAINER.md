@@ -16,10 +16,14 @@ embedded in the editor. The teacher:
 - climbs a five-rung hint ladder rather than answering;
 - never writes into the learner's buffer.
 
-It is a proof of concept for one claim: *an observer watching the edit stream
-can distinguish "stuck" from "thinking" well enough that a teacher speaking on
-that signal feels helpful rather than intrusive.* Everything in the codebase
-either tests that claim or keeps the lesson running while it is tested.
+It began as a proof of concept for one claim — *an observer watching the edit
+stream can distinguish "stuck" from "thinking" well enough that a teacher speaking
+on that signal feels helpful rather than intrusive* — and that claim is still the
+spine of it: the observer decides **when** the teacher may speak, and everything
+else decides **what** it says. Since then the teacher has grown a memory of the
+conversation, a profile of the learner, and the ability to explain; see
+[README.md](README.md) for the current behaviour and
+[docs/EVALUATION.md](docs/EVALUATION.md) for how to measure it.
 
 The lesson content is a twenty-exercise basics ramp — printing, variables,
 arithmetic, strings, conditionals, lists, then `for` over a list building up to
@@ -49,7 +53,7 @@ live, and the seven misconception detectors only fire there.
 | Piece | Version | Role |
 |---|---|---|
 | **Python** | 3.13 | |
-| **FastAPI** | 0.141 | four endpoints; one streams |
+| **FastAPI** | 0.141 | four endpoints, one of which streams; also serves the built app |
 | **uvicorn** | 0.53 | ASGI server, `--reload` in dev |
 | **pydantic** | 2.13 | request/response validation |
 | **openai** (SDK) | 3.14 | `AsyncOpenAI` against any OpenAI-compatible endpoint |
@@ -59,7 +63,8 @@ live, and the seven misconception detectors only fire there.
 
 Any OpenAI-compatible chat endpoint with **tool calling**. Default is Groq with
 `openai/gpt-oss-120b`; `.env.example` shows Ollama and Gemini. The model is
-never asked for prose — it is asked to call exactly one of five tools.
+never asked for prose — it is asked to call exactly one of six tools (`give_hint`,
+`explain`, `ask_question`, `translate_error`, `confirm_success`, `stay_silent`).
 
 ### Testing
 
@@ -152,8 +157,8 @@ show the dev panel, and watch:
 - a slider for every weight and threshold in `src/observer/config.ts`.
 
 **Export log** downloads the session as JSON — every event with a millisecond
-offset plus the config in force. That file is the evidence the PoC is meant to
-produce. **Reset session** clears the log and gate state without reloading.
+offset plus the config in force. That file is the evidence for how well the
+observer is tuned. **Reset session** clears the log and gate state without reloading.
 
 To change a default permanently, edit `DEFAULT_CONFIG` in
 `src/observer/config.ts`; the sliders read their ranges from `CONFIG_FIELDS`
@@ -577,7 +582,7 @@ copy, not to run."*
 
 ### 5.19 Evidence, not vibes
 
-The point of the PoC is a measurement. The exported session log is a timeline
+The point of the observer is a measurement. The exported session log is a timeline
 of every edit (with its semantic verdict), run (with correctness), silence
 milestone, question, and gate decision (with the score and the reason), plus
 the configuration in force. The success criteria in the README — how often the

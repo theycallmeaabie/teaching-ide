@@ -49,13 +49,15 @@ export async function flushSession(): Promise<void> {
   try {
     const row = snapshot()
     if (sessionId) {
-      await supabase.from('sessions').update(row).eq('id', sessionId)
+      const { error } = await supabase.from('sessions').update(row).eq('id', sessionId)
+      if (error) console.warn('sessions: could not update', error.message)
     } else {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from('sessions')
         .insert({ ...row, user_id: userId })
         .select('id')
         .single()
+      if (error) console.warn('sessions: could not create', error.message)
       sessionId = (data as { id: string } | null)?.id ?? null
     }
   } catch {

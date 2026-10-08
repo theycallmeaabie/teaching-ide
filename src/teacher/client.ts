@@ -1,8 +1,10 @@
 import type { Misconception, RunResult } from '../types'
+import type { LearnerProfile } from '../lesson/profile'
 import { accessToken } from '../auth/supabase'
 
 export type TeacherTool =
   | 'give_hint'
+  | 'explain'
   | 'ask_question'
   | 'translate_error'
   | 'confirm_success'
@@ -23,6 +25,8 @@ export type TeachRequestBody = {
   exercise_id: string
   exercise_prompt: string
   expected_stdout: string
+  exercise_concept: string
+  exercise_section: string
   tier: number
   tier_texts: string[]
   attempts: number
@@ -41,6 +45,12 @@ export type TeachRequestBody = {
   trigger: 'gate' | 'ask' | 'success'
   learner_question: string | null
   recent: { role: 'teacher' | 'learner'; text: string }[]
+  /** Who they have been so far. Null for a newcomer. */
+  profile: LearnerProfile | null
+  /** The last hint was given and the code has not changed since. */
+  previous_hint_failed: boolean
+  /** One per page load, so the server can count interruptions per sitting. */
+  session_id: string
 }
 
 type Handlers = {
