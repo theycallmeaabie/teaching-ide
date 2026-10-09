@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { accessToken } from '../auth/supabase'
 import { apiUrl } from '../api'
+import { hush } from '../teacher/voice'
 
 /**
  * Ask by voice: record in the browser, have the server turn it into words, hand
@@ -168,6 +169,7 @@ export function useVoice(onText: (text: string) => void) {
     if (!support.ok) return say(support.why)
 
     say(null)
+    hush() // or the microphone hears the teacher instead of the question
     go('starting')
     let stream: MediaStream
     try {

@@ -9,6 +9,7 @@ import { ScratchPane } from '../ui/ScratchPane'
 import { AskBox } from '../ui/AskBox'
 import { Conversation } from '../ui/Conversation'
 import { TopBar } from '../ui/TopBar'
+import { VoiceToggle } from '../ui/VoiceToggle'
 import { useTitle } from '../ui/useTitle'
 import { readPref, writePref } from '../ui/prefs'
 import { CodeIcon, EyeIcon, PlayIcon } from '../ui/icons'
@@ -20,6 +21,7 @@ import { EXERCISES } from '../lesson/exercises'
 import type { Course } from '../lesson/courses'
 import { leaveLesson, submitRun } from '../lesson/teaching'
 import { dismissSpeech, requestTeaching } from '../teacher/bridge'
+import { followTeacher } from '../teacher/voice'
 import { fetchHealth } from '../teacher/health'
 import { useStore } from '../store'
 
@@ -76,6 +78,9 @@ export function CoursePage({ course }: { course: Course }) {
   // Going back to the course page: bank their place and let go of what only made
   // sense beside this code (see leaveLesson).
   useEffect(() => leaveLesson, [])
+
+  // Read the teacher aloud while the lesson is open, if they have asked for it.
+  useEffect(() => followTeacher(), [])
 
   // A worker restart invalidates the AST baseline the observer compares against.
   useEffect(
@@ -154,6 +159,7 @@ export function CoursePage({ course }: { course: Course }) {
           {runnerStatus === 'failed' && 'Python failed to start'}
         </span>
         <span className="topbar-sep" />
+        <VoiceToggle />
         <button
           className="btn btn-ghost btn-icon"
           onClick={() => setDevOpen(!devOpen)}

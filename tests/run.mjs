@@ -22,6 +22,7 @@ const SUITES = [
   { name: 'api', kind: 'unit', file: 'tests/api.test.py', what: 'the HTTP surface with the model stubbed' },
   { name: 'stt', kind: 'unit', file: 'tests/stt.test.py', what: 'voice questions: limits, formats, provider errors (stubbed)' },
   { name: 'plain', kind: 'unit', file: 'tests/plain.test.ts', what: 'the long dash taken out of the teacher\'s words, even when a stream splits it' },
+  { name: 'spoken', kind: 'unit', file: 'tests/spoken.test.ts', what: 'the teacher read aloud: code said the way a person would, long text cut where they would pause' },
   { name: 'lesson', kind: 'unit', file: 'tests/lesson.test.ts', what: 'learner profile + did-my-hint-land rule' },
   { name: 'phase1', kind: 'browser', file: 'tests/browser/phase1.mjs', what: 'editor + execution' },
   { name: 'phase2', kind: 'browser', file: 'tests/browser/phase2.mjs', what: 'observer, live' },
@@ -31,6 +32,7 @@ const SUITES = [
   { name: 'pages', kind: 'browser', file: 'tests/browser/pages.mjs', what: 'sign-in, guest, the course page, routing, password reset, no-Supabase mode (fake Supabase; no model)' },
   { name: 'phase6', kind: 'browser', file: 'tests/browser/phase6.mjs', what: 'the product teacher: memory, explain, hints that did not land' },
   { name: 'voice', kind: 'browser', file: 'tests/browser/voice.mjs', what: 'the mic: record, transcribe into the box, never auto-send (fake mic, stubbed server)' },
+  { name: 'speaker', kind: 'browser', file: 'tests/browser/speaker.mjs', what: 'the teacher read aloud: off until asked, each answer once, stops when dismissed (fake speech engine, stubbed server)' },
 ]
 
 const arg = process.argv[2]

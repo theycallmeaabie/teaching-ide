@@ -114,6 +114,8 @@ src/
     client.ts             fetch + hand-rolled SSE parser; translateError
     escalation.ts         pure: did the last hint land? (unchanged code -> climb)
     plain.ts              pure: takes the long dash out of teacher text
+    spoken.ts             pure: teacher text as it is said aloud (code spans in words)
+    voice.ts              reads the teacher aloud (browser speechSynthesis), off by default
     health.ts             /api/health -> degraded flag for the top bar
   auth/                 supabase.ts (client, null if unconfigured), session.ts (lifecycle,
                         sign-in/up, password reset), access.ts (who may see a page),
@@ -127,6 +129,7 @@ src/
     Splitter, useLayout   draggable panes, sizes remembered
     ThemeToggle, theme, prefs   light/dark, per-viewer preferences
     useVoice              microphone capture and transcription
+    VoiceToggle           the speaker: read the teacher aloud or not
     icons                 inline SVG icons (no third-party font or request)
   store.ts              Zustand store: low-frequency lesson state
   App.tsx, main.tsx     the router (wouter), the access guard, and boot
@@ -413,6 +416,11 @@ Notes:
   asked, releasing the microphone the moment it stops. The audio goes to
   `/api/transcribe`; the words land in the ask box and are **never sent
   automatically**, because speech-to-text mangles code ("colon" is not "Colin").
+- **Read aloud.** `voice.ts` follows `speech` in the store and reads each one
+  once, when `streaming` goes false, with the browser's `speechSynthesis`, a
+  sentence per utterance (long ones get cut off in some browsers). A different
+  id, or none, cancels it; so do the mic starting and the speaker turning off.
+  Off by default (`teaching-ide:voice`). `spoken.ts` turns code spans into words.
 - **Themes.** Light and dark, following the OS until a choice is made. Every
   colour is a CSS variable; the editor's syntax colours read the same ones, so
   switching never rebuilds the editor. `index.html` sets the theme before first
@@ -740,6 +748,7 @@ way a session row opens and recording starts.
 | Supabase unconfigured | `supabase === null` | Signed-out mode, nothing stored |
 | Progress cannot be read or saved | `data/progress.ts` | Visible notice with retry; no writes until a read succeeds |
 | Voice unavailable, blocked or empty | `stt.py`, `useVoice` | A plain message; typing still works |
+| No speech engine in the browser | `voiceSupported` | Speaker disabled, saying why; the bubble is unchanged |
 
 The invariant: **the lesson never stalls.** Every row above ends in speech from
 the ladder or silence with a recorded reason.
@@ -829,6 +838,7 @@ the live-teacher suite).
 | observer | unit | Every score term, the gate, structural "empty" |
 | lesson | unit | Learner profile, did-the-last-hint-land |
 | plain | unit | The long dash taken out of teacher text, including across stream chunks |
+| spoken | unit | Code spans said in words, long text cut into sentences |
 | auth | unit (Python) | Token handling: anonymous, valid, expired, wrong audience |
 | teacher | unit (Python) | Prompt contents, memory, `explain`, sanitising, instruction guard, quotas |
 | api | unit (Python) | The HTTP surface with the model stubbed: limits, fallbacks, headers, cross-origin, single origin |
@@ -841,6 +851,7 @@ the live-teacher suite).
 | accounts | browser | Sign-in, saved progress, memory, reset on sign-out, against a fake Supabase |
 | pages | browser | Redirects and the guard, guest, sign-in/up (confirmation on and off), password reset, the course page and Continue, coming back to the lesson, no-Supabase mode |
 | voice | browser | The mic with a fake microphone and a stubbed server |
+| speaker | browser | Reading aloud with a fake speech engine: off by default, once per answer, stops when dismissed |
 
 Techniques worth knowing:
 
