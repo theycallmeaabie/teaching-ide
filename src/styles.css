@@ -450,8 +450,12 @@ pre.err { color: var(--danger); }
    the example inside the code area; and the conversation dock under both. Sizes
    come from App.tsx (percentages / px, remembered); these are only the limits. */
 
+/* It may shrink, and the output column may not go below its minimum, so the
+   1px splitter between them comes out of the code area. Without that, the code
+   area dragged to its widest (100% - 240px) plus the splitter plus the output's
+   240px is 1px wider than the window, and the page scrolls sideways. */
 .code-area {
-  flex: 0 0 auto; display: flex; flex-direction: column;
+  flex: 0 1 auto; display: flex; flex-direction: column;
   min-width: 300px; max-width: calc(100% - 240px);
 }
 .code-area.with-scratch { min-width: 440px; }
