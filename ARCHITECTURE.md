@@ -78,8 +78,9 @@ learner code.
 it is disposable: Stop terminates it and boots a fresh one.
 
 **FastAPI** is the teacher's voice. It turns a context snapshot into one tool
-call from a model, validates it and streams it back. It also serves the built
-app, so a deployment is one process on one origin.
+call from a model, validates it and streams it back. It can also serve the built
+app as one process on one origin; deployed, the page is on Vercel and this runs
+alone on Render (section 16).
 
 **Supabase** is optional. The browser talks to it directly for sign-in, saved
 progress and session logs; the server only verifies the token it issues.
@@ -774,9 +775,10 @@ the ladder or silence with a recorded reason.
 | `TEACH_PER_MINUTE` / `TEACH_PER_DAY` / `TEACH_GATE_BUDGET` | `quota.py` | 10 / 400 / 8 |
 | `TRUST_PROXY` | `quota.py` | `0` |
 | `SUPABASE_URL` / `SUPABASE_JWT_SECRET` / `SUPABASE_JWT_AUDIENCE` | `auth.py` | empty / empty (both empty: anonymous) / `authenticated` |
-| `ALLOWED_ORIGINS` | `main.py` | the Vite dev origins |
+| `ALLOWED_ORIGINS` | `main.py` | the Vite dev origins (deployed: the page's Vercel address) |
 | `ENABLE_DOCS` | `main.py` | `0` |
 | `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` | the browser, **at build time** | empty (signed-out mode) |
+| `VITE_API_URL` | the browser (`src/api.ts`), **at build time** | empty (`/api` on the page's own origin) |
 | `CHROME` | `tests/run.mjs` | auto-detected |
 
 Observer weights and thresholds are in `src/observer/config.ts`, mutated live from
@@ -796,11 +798,22 @@ the dev panel, and are not environment-driven.
 | `npm run verify-supabase` | Round-trips both tables, RLS and the token path against a real project |
 | `npm run validate-tools` | 30 live calls: does tool calling work on this model |
 
-The **Dockerfile** is two stages: Node builds the bundle (the two `VITE_` values are
-build arguments), then a slim Python image runs `uvicorn` on one process as a
-non-root user, with a healthcheck on `/api/health`. One process is deliberate,
-since the limits live in memory. The Dockerfile has not been built on the machine
-this was written on.
+**Deployed, the page and the API are apart.** The page is static files on Vercel
+(`vercel.json`: `npm ci`, `npm run build`, `dist/`, and a rewrite sending any path
+that is not a file and not under `/api` to `index.html`, the same rule as
+`SinglePageApp`). The API is a native Python web service on Render (`render.yaml`:
+`pip install`, one `uvicorn` process, healthcheck on `/api/health`), with no
+`dist/`, so it serves no HTML. The page reaches it at `VITE_API_URL`, and the API
+names the page in `ALLOWED_ORIGINS` so the browser accepts its replies. Two things
+follow from Render's free plan sleeping the API: the lesson calls `/api/health` as
+it opens, which wakes it, and `askTeacher` gives up on a reply that has not started
+within 15 seconds, so the learner gets the pre-written rung rather than a minute of
+"thinking". The README has the setup order.
+
+The **Dockerfile** is the all-in-one alternative, two stages: Node builds the bundle
+(the two `VITE_` values are build arguments), then a slim Python image runs
+`uvicorn` on one process as a non-root user, with a healthcheck on `/api/health`.
+One process is deliberate, since the limits live in memory.
 
 ---
 
@@ -818,7 +831,7 @@ the live-teacher suite).
 | plain | unit | The long dash taken out of teacher text, including across stream chunks |
 | auth | unit (Python) | Token handling: anonymous, valid, expired, wrong audience |
 | teacher | unit (Python) | Prompt contents, memory, `explain`, sanitising, instruction guard, quotas |
-| api | unit (Python) | The HTTP surface with the model stubbed: limits, fallbacks, headers, single origin |
+| api | unit (Python) | The HTTP surface with the model stubbed: limits, fallbacks, headers, cross-origin, single origin |
 | stt | unit (Python) | Voice limits, formats, provider errors (stubbed) |
 | phase1 | browser | Editor and execution, Stop, restart |
 | phase2 | browser | The observer live, the dev panel |

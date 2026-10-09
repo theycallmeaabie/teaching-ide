@@ -200,6 +200,23 @@ check("...the rest are told it is a rate limit",
       all("rate limited" in (final(c.text).get("note") or "") for c in rotating[3:]))
 
 print()
+print("--- Hosted apart: the page on one origin, the API on another ----------")
+from server.main import ALLOWED_ORIGINS
+
+# The teacher call is a POST with JSON and, signed in, a token: the browser asks
+# first (a preflight) and refuses the reply unless the API names the page.
+page_origin = ALLOWED_ORIGINS[0]
+asking = {"Access-Control-Request-Method": "POST", "Access-Control-Request-Headers": "authorization,content-type"}
+r = client.options("/api/teach", headers={"Origin": page_origin, **asking})
+check("a listed page may call the teacher", r.status_code == 200 and r.headers.get("access-control-allow-origin") == page_origin,
+      f"{r.status_code} {r.headers.get('access-control-allow-origin')}")
+check("...with its sign-in token", "authorization" in r.headers.get("access-control-allow-headers", "").lower())
+r = client.get("/api/health", headers={"Origin": page_origin})
+check("...and reads the replies", r.headers.get("access-control-allow-origin") == page_origin)
+r = client.options("/api/teach", headers={"Origin": "https://someone-else.example", **asking})
+check("a page not listed is refused", r.status_code == 400 and "access-control-allow-origin" not in r.headers, f"{r.status_code}")
+
+print()
 print("--- One deployable ---------------------------------------------------")
 from pathlib import Path
 

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { accessToken } from '../auth/supabase'
+import { apiUrl } from '../api'
 
 /**
  * Ask by voice: record in the browser, have the server turn it into words, hand
@@ -119,7 +120,7 @@ export function useVoice(onText: (text: string) => void) {
       const timeout = window.setTimeout(() => ctl.abort(), 30_000)
       try {
         const token = await accessToken()
-        const res = await fetch('/api/transcribe', {
+        const res = await fetch(apiUrl('/api/transcribe'), {
           method: 'POST',
           headers: {
             'Content-Type': blob.type || 'audio/webm',

@@ -1,6 +1,7 @@
 import type { Misconception, RunResult } from '../types'
 import type { LearnerProfile } from '../lesson/profile'
 import { accessToken } from '../auth/supabase'
+import { apiUrl } from '../api'
 
 export type TeacherTool =
   | 'give_hint'
@@ -60,6 +61,16 @@ type Handlers = {
 }
 
 /**
+ * How long to wait for the reply to start. The server starts it before it calls
+ * the model, so this is normally well under a second; what takes longer is an
+ * API that was asleep (Render's free plan sleeps after 15 minutes idle and takes
+ * about a minute to wake). Past this the pre-written hint is the better answer.
+ * Only the start is timed: once the stream is flowing, the server's own
+ * deadlines apply.
+ */
+const START_TIMEOUT_MS = 15_000
+
+/**
  * Streams one teaching decision. Returns null only if the network itself failed
  * — every other failure mode is turned into a usable decision by the backend,
  * because the lesson must not stall on a bad model response.
@@ -73,19 +84,28 @@ export async function askTeacher(
   // rather than a refusal, so the lesson works either way.
   const token = await accessToken()
 
+  // The caller's signal still cancels the whole call, stream included; the timer
+  // only ever cancels the wait for it to start.
+  const ctl = new AbortController()
+  if (signal?.aborted) ctl.abort()
+  signal?.addEventListener('abort', () => ctl.abort(), { once: true })
+  const timer = setTimeout(() => ctl.abort(), START_TIMEOUT_MS)
+
   let res: Response
   try {
-    res = await fetch('/api/teach', {
+    res = await fetch(apiUrl('/api/teach'), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
       body: JSON.stringify(body),
-      signal,
+      signal: ctl.signal,
     })
   } catch {
     return null
+  } finally {
+    clearTimeout(timer)
   }
   if (!res.ok || !res.body) return null
 
@@ -137,10 +157,13 @@ export async function translateError(error: {
   line: number | null
 }): Promise<{ plain_english: string; line: number | null } | null> {
   try {
-    const res = await fetch('/api/translate-error', {
+    const res = await fetch(apiUrl('/api/translate-error'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(error),
+      // A lookup answers at once or not usefully: from an API still waking up it
+      // would land a minute later, beside whatever they have run since.
+      signal: AbortSignal.timeout(5_000),
     })
     if (!res.ok) return null
     const data = await res.json()

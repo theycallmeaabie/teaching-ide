@@ -30,8 +30,9 @@ npm run dev     # editor on http://localhost:5173
 npm run api     # teacher on http://127.0.0.1:8000  (second terminal)
 ```
 
-For one process serving everything, as in production: `npm start` builds the app
-and serves it, with the API, on http://127.0.0.1:8000.
+For one process serving everything: `npm start` builds the app and serves it, with
+the API, on http://127.0.0.1:8000. The live site is split instead (see
+[Deploying](#deploying)).
 
 The app opens on a sign-in page, then a course page, then the lesson (see
 [Pages](#pages)). With no Supabase project configured there is nothing to sign in
@@ -119,8 +120,9 @@ anything behind it: the runner, the observer's code analysis, the error dictiona
 the teacher's prompt are Python's, so a second language is more than a card.
 
 The pages are routes in the browser, so a production server has to send every path that
-is not a file to `index.html`. `npm start` does (`server/main.py`); if you host `dist/`
-somewhere else, configure the same fallback there.
+is not a file to `index.html`. `npm start` does (`server/main.py`), and so does Vercel
+(the rewrite in `vercel.json`); if you host `dist/` anywhere else, configure the same
+fallback there.
 
 ## Tests
 
@@ -249,6 +251,36 @@ Anything rejected falls back to the hand-written rung, and the dev panel records
 
 ## Deploying
 
+The page and the API are hosted apart: the page on **Vercel** (`vercel.json`), the API
+on **Render** (`render.yaml`). Nearly everything happens in the learner's browser, so
+the page is static files on a CDN that never sleeps; only the teacher's own phrasing
+and voice questions need the API. On Render's free plan the API sleeps after 15
+minutes idle and takes about a minute to wake: the lesson pings it as it opens, and a
+teacher call that gets no reply within 15 seconds gets the hand-written hint instead.
+
+Set it up once, in this order, because each side needs the other's address:
+
+1. **Render → New → Blueprint →** this repo. It creates `teaching-ide-api` and asks
+   for `LLM_API_KEY`, `SUPABASE_URL`, and `ALLOWED_ORIGINS`: the page's address on
+   Vercel, which is `https://<project name>.vercel.app` (fix it later if Vercel picks
+   another).
+2. **Vercel → Add New → Project →** this repo. `vercel.json` sets the build; add
+   `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` and `VITE_API_URL` (the Render
+   address from step 1, no trailing slash) under Environment Variables, then deploy.
+3. **Supabase → Authentication → URL Configuration:** the Vercel address as the Site
+   URL, and `<that address>/reset-password` under Redirect URLs.
+
+After that, every push to `main` redeploys the page, and the API too when `server/`
+or `requirements.txt` changed. The `VITE_` values are read when the page is built,
+so changing one on Vercel needs a redeploy there.
+
+If the teacher only ever gives the hand-written hints and the browser console says
+**blocked by CORS policy**, `ALLOWED_ORIGINS` on Render does not match the address the
+page is served from. Vercel's preview deployments have addresses of their own, so
+they get the hand-written hints unless you add them there too.
+
+To host it all in one place instead, the Dockerfile builds one image that serves both:
+
 ```bash
 docker build -t teaching-ide \
   --build-arg VITE_SUPABASE_URL=... --build-arg VITE_SUPABASE_ANON_KEY=... .
@@ -257,8 +289,7 @@ docker run -p 8000:8000 --env-file .env teaching-ide
 
 One container, one process, one origin. Put TLS in front of it (and set
 `TRUST_PROXY=1` only if the proxy is yours, so rate limits see real addresses).
-`.env.example` documents every setting. **The Dockerfile has not been built on the
-machine this was written on**. Build it once before relying on it.
+`.env.example` documents every setting.
 
 ### Limits to know about
 

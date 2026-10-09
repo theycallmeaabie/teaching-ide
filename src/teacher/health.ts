@@ -1,3 +1,5 @@
+import { apiUrl } from '../api'
+
 /**
  * Whether the teacher is actually speaking in its own words right now.
  *
@@ -23,7 +25,7 @@ const UNKNOWN: TeacherHealth = {
 
 export async function fetchHealth(): Promise<TeacherHealth> {
   try {
-    const res = await fetch('/api/health')
+    const res = await fetch(apiUrl('/api/health'))
     if (!res.ok) return UNKNOWN
     const d = await res.json()
     const llm = d.llm ?? {}
