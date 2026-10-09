@@ -19,7 +19,7 @@ from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException
 
-from . import auth, cache, errors, leakguard, llm, quota, stt
+from . import auth, cache, errors, leakguard, llm, quota, stt, tts
 from .models import RunErrorIn, TeachRequest
 from .prompts import SYSTEM, build_context
 from .tools import TOOLS, TOOL_NAMES
@@ -274,6 +274,9 @@ async def check_ladder(payload: dict) -> dict[str, Any]:
 # Voice questions: audio in, text out. Its own limits, not the teacher's.
 app.include_router(stt.router)
 
+# The teacher read aloud: text in, ElevenLabs audio out. Its own limits too.
+app.include_router(tts.router)
+
 
 @app.get("/api/health")
 async def health() -> dict[str, Any]:
@@ -287,6 +290,8 @@ async def health() -> dict[str, Any]:
         # Whether a presented token must verify. False means every call is treated
         # as anonymous, the default until SUPABASE_URL or SUPABASE_JWT_SECRET is set.
         "verifies_tokens": auth.ENABLED,
+        # The ElevenLabs voice: set up or not, and paused if it ran out of credits.
+        "voice": tts.status(),
     }
 
 

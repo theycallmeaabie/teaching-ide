@@ -136,6 +136,7 @@ npm test api        # the HTTP surface with the model stubbed
 npm test accounts   # sign-in, saved progress and memory (a fake Supabase)
 npm test pages      # sign-in, guest, the course page, routing, password reset (a fake Supabase)
 npm test speaker    # the teacher read aloud (a fake speech engine)
+npm test tts        # the ElevenLabs voice on the server (stubbed)
 npm run validate-tools    # 30 live calls: does tool calling actually work
 ```
 
@@ -221,27 +222,44 @@ fake microphone and a stubbed server).
 
 ## The teacher's voice
 
-The speaker in the top bar reads the teacher aloud with the browser's own speech
-engine: no server, no key, no cost, and it works with the backend down, so the
-pre-written hints are read too. It is **off until the learner turns it on**, and
-the choice is remembered per browser (`teaching-ide:voice`).
+The speaker in the top bar reads the teacher aloud. The voice is **ElevenLabs**,
+through `POST /api/speak`. When that cannot be had, the **browser's own speech
+engine** reads it instead, so the learner hears a different voice rather than
+nothing. It is **off until the learner turns it on**, and the choice is
+remembered per browser (`teaching-ide:voice`).
 
-- **When:** each thing the teacher says is read once, after it has all arrived.
-  Reading stops the moment it is dismissed or replaced, when the mic starts
-  recording (or the mic would hear the teacher), and when the speaker is turned off.
+- **Setup:** set `ELEVENLABS_API_KEY` where the API runs (`.env` locally, the
+  service's Environment tab on Render). `/api/health` shows `voice.key_present`.
+  Without a key every learner gets the browser voice, with no wait.
+- **When the browser voice takes over:** no key; the credits used up; ElevenLabs
+  refusing the key or the server (its free plan can refuse calls from cloud
+  hosts as "unusual activity"); the day's character budget spent; a limit hit; or
+  the API asleep, down or slower than 8 s. After the first four, the server stops
+  calling ElevenLabs and the browser stops asking, both for 10 minutes, so
+  nobody waits on a request that will fail.
+- **Cost:** only learners who turned the speaker on spend anything. The audio
+  for words already spoken is kept in memory and replayed, so a pre-written hint
+  costs credits once. Limits: `TTS_PER_MINUTE` / `TTS_PER_DAY` per caller, and
+  `TTS_CHARS_PER_DAY` for the whole key (20,000 by default).
+- **When it reads:** each thing the teacher says is read once, after it has all
+  arrived. Reading stops the moment it is dismissed or replaced, when the mic
+  starts recording (or the mic would hear the teacher), and when the speaker is
+  turned off. Audio that arrives after any of those is dropped.
 - **Code:** a code span is said the way a person would say it: `:` as "colon",
   `print(total)` as "print total", `if score >= 60:` as "if score greater than or
   equal to 60 colon". Anything too long to follow by ear (square brackets, nested
-  sums) is "the code on screen".
-- **The voice:** the best English voice the device has (Edge's "Natural" voices,
-  Chrome's Google voices, macOS's enhanced ones), never a novelty one. So it
-  sounds as good as the device does: good on Windows, macOS and Chrome, robotic
-  where only espeak is installed. A browser with no speech engine disables the
-  speaker and says why.
+  sums) is "the code on screen". Both voices are sent the same words.
+- **The browser voice:** the best English voice the device has (Edge's "Natural"
+  voices, Chrome's Google voices, macOS's enhanced ones), never a novelty one.
+- **Config:** `ELEVENLABS_VOICE_ID` (George by default; any voice in the
+  account's library), `ELEVENLABS_MODEL` (`eleven_flash_v2_5`: the cheapest and
+  fastest), `ELEVENLABS_FORMAT` (`mp3_44100_64`).
 
-Code: `src/teacher/voice.ts` (when to speak), `src/teacher/spoken.ts` (what to
-say), `src/ui/VoiceToggle.tsx`. Tests: `npm test spoken` (unit) and `npm test
-speaker` (browser, with a fake speech engine and a stubbed server).
+Code: `server/tts.py`, `src/teacher/voice.ts` (when to speak, and in which
+voice), `src/teacher/spoken.ts` (what to say), `src/ui/VoiceToggle.tsx`. Tests:
+`npm test tts` (server, ElevenLabs stubbed), `npm test spoken` (unit) and
+`npm test speaker` (browser, with a fake speech engine and audio, and a stubbed
+server).
 
 ## The dev panel
 

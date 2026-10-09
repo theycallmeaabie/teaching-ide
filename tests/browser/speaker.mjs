@@ -1,12 +1,15 @@
 /**
- * The teacher read aloud. The browser's speech engine is replaced by a stand-in
- * that writes down what it is asked to say, so this checks what is said and when,
- * not how it sounds. The teacher's server is stubbed too: nothing reaches a model.
+ * The teacher read aloud. The browser's speech engine and audio playback are
+ * replaced by stand-ins that write down what they are asked to do, so this checks
+ * what is said, in which voice, and when, not how it sounds. The teacher's server
+ * and /api/speak are stubbed too: nothing reaches a model or ElevenLabs.
  *
  * What matters about this feature, and so what is checked: it is off until the
  * learner turns it on and remembered after; each thing the teacher says is read
- * once, with its code said the way a person would; and it stops the moment that
- * thing is dismissed, the learner starts talking, or they turn it off.
+ * once, with its code said the way a person would; the ElevenLabs voice is used
+ * when the server has it, and the browser's own voice when it does not; and it
+ * stops the moment that thing is dismissed, the learner starts talking, or they
+ * turn it off.
  */
 import puppeteer from 'puppeteer-core'
 import { watchReloads } from '../support/reload-guard.mjs'
@@ -46,6 +49,13 @@ function fakeSpeech() {
   window.SpeechSynthesisUtterance = class {
     constructor(text) { this.text = text }
   }
+  // Audio clips: what type each one was, and every one played.
+  window.__played = []
+  const types = {}
+  const make = URL.createObjectURL
+  URL.createObjectURL = (b) => { const u = make(b); types[u] = b.type; return u }
+  HTMLMediaElement.prototype.play = function () { window.__played.push(types[this.src] ?? this.src); return Promise.resolve() }
+  HTMLMediaElement.prototype.pause = function () {}
 }
 
 const page = await b.newPage()
@@ -71,12 +81,26 @@ const answer = (text, followup = '') =>
     ['done', { tool: 'explain', source: 'llm', note: null, doc_version: 1, args: { text, example: '', followup_question: followup } }],
   ])
 const answers = []
+// /api/speak: 'down' is a server that cannot help this time, 'eleven' answers
+// with audio, 'slow' answers with audio a second and a half later, 'no_credits'
+// is ElevenLabs out of credits.
+const speaker = { mode: 'down', texts: [] }
 let intercepting = true
 await page.setRequestInterception(true)
-page.on('request', (r) => {
+page.on('request', async (r) => {
   if (!intercepting) return
   if (new URL(r.url()).pathname === '/api/teach') {
     return r.respond({ status: 200, contentType: 'text/event-stream', body: answers.shift() ?? answer('Nothing more to say.') })
+  }
+  if (new URL(r.url()).pathname === '/api/speak') {
+    speaker.texts.push(JSON.parse(r.postData() || '{}').text)
+    if (speaker.mode === 'slow') {
+      await sleep(1500)
+      return r.respond({ status: 200, contentType: 'audio/mpeg', body: Buffer.alloc(2048) }).catch(() => {}) // the page may have given up on it
+    }
+    if (speaker.mode === 'eleven') return r.respond({ status: 200, contentType: 'audio/mpeg', body: Buffer.alloc(2048) })
+    const kind = speaker.mode === 'no_credits' ? 'no_credits' : 'unavailable'
+    return r.respond({ status: 503, contentType: 'application/json', body: JSON.stringify({ detail: 'stubbed', kind }) })
   }
   return r.continue()
 })
@@ -85,6 +109,10 @@ const toggle = '.voice-toggle'
 const toggleInfo = () => page.$eval(toggle, (t) => ({ pressed: t.getAttribute('aria-pressed'), disabled: t.disabled, title: t.title }))
 const said = () => page.evaluate(() => window.__said.map((s) => s.text))
 const cancels = () => page.evaluate(() => window.__cancels)
+const clips = () => page.evaluate(() => window.__played.filter((t) => t === 'audio/mpeg').length)
+/** Wait for the browser voice to have said at least n things: it speaks only
+ *  after the server has had its chance. */
+const heard = (n) => page.waitForFunction((n) => window.__said.length >= n, { timeout: 5000 }, n).catch(() => {})
 const settled = () =>
   page.waitForFunction(() => { const s = window.__store.getState(); return !s.teacherBusy && s.speech && !s.speech.streaming }, { timeout: 15000 })
 
@@ -108,6 +136,7 @@ check('with it off, the teacher is not read aloud', (await said()).length === 0,
 await page.click(toggle)
 t = await toggleInfo()
 check('clicking it turns it on, and shows it', t.pressed === 'true' && /Stop/.test(t.title), JSON.stringify(t))
+await heard(3)
 let words = await said()
 check('...and reads what is on screen straight away, code said the way a person says it',
   JSON.stringify(words) === JSON.stringify(['Put a colon at the end of for n in nums.', 'Then run it.', 'What does the colon start?']),
@@ -121,6 +150,41 @@ await ask('and then?', answer('Line 2 needs `print(total)`.'))
 words = (await said()).slice(before)
 check('the next answer is read once it has all arrived, and only once', JSON.stringify(words) === JSON.stringify(['Line 2 needs print total.']), JSON.stringify(words))
 
+// ------------------------------------------------------------------ ElevenLabs first
+speaker.mode = 'eleven'
+before = (await said()).length
+let clipsBefore = await clips()
+let asked = speaker.texts.length
+await ask('what next?', answer('Use `print(total)` on line 3.'))
+await page.waitForFunction((n) => window.__played.filter((t) => t === 'audio/mpeg').length > n, { timeout: 5000 }, clipsBefore).catch(() => {})
+check('when the server has the ElevenLabs voice, that voice reads the answer', (await clips()) === clipsBefore + 1, `${(await clips()) - clipsBefore} clips`)
+check('...sent the words the way they should sound', JSON.stringify(speaker.texts.slice(asked)) === JSON.stringify(['Use print total on line 3.']), JSON.stringify(speaker.texts.slice(asked)))
+check('...and the browser voice stays quiet', (await said()).length === before, JSON.stringify((await said()).slice(before)))
+
+// The learner dismisses the hint while its audio is still on the way.
+speaker.mode = 'slow'
+before = (await said()).length
+clipsBefore = await clips()
+await ask('one more thing', answer('This arrives too late to be wanted.'))
+await page.$eval('.cm-speech-x', (x) => x.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })))
+await sleep(2200)
+check('audio that arrives after the hint was dismissed is never played, in either voice',
+  (await clips()) === clipsBefore && (await said()).length === before, `${(await clips()) - clipsBefore} clips, ${(await said()).length - before} said`)
+
+speaker.mode = 'no_credits'
+before = (await said()).length
+clipsBefore = await clips()
+await ask('and then?', answer('Then run it.'))
+await heard(before + 1)
+words = (await said()).slice(before)
+check('out of credits, the browser voice reads it instead', JSON.stringify(words) === JSON.stringify(['Then run it.']) && (await clips()) === clipsBefore, JSON.stringify(words))
+asked = speaker.texts.length
+before = (await said()).length
+await ask('anything else?', answer('Nothing else.'))
+await heard(before + 1)
+check('...and the server is not asked again for a while, so the next one is not kept waiting', speaker.texts.length === asked, `${speaker.texts.length - asked} more requests`)
+check('...it goes straight to the browser voice', JSON.stringify((await said()).slice(before)) === JSON.stringify(['Nothing else.']), JSON.stringify((await said()).slice(before)))
+
 let c = await cancels()
 await page.$eval('.cm-speech-x', (x) => x.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })))
 await page.waitForFunction(() => window.__store.getState().speech === null, { timeout: 5000 })
@@ -128,7 +192,7 @@ check('dismissing what the teacher said stops it being read', (await cancels()) 
 
 before = (await said()).length
 await page.evaluate(() => window.__bridge.deliverPrewrittenHint())
-await sleep(300)
+await heard(before + 1)
 words = (await said()).slice(before)
 check('a pre-written hint is read too: the voice needs no server', words.length > 0 && words.every((w) => !w.includes('`')), JSON.stringify(words))
 
@@ -162,10 +226,12 @@ check('with it off again, nothing is read', (await said()).length === 0, JSON.st
 await page.$eval('.cm-speech-x', (x) => x.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })))
 await page.waitForFunction(() => window.__store.getState().speech === null, { timeout: 5000 })
 await page.click(toggle)
+await heard(1)
 words = await said()
 check('turned on with nothing on screen, it says hello so the learner hears it working', words.length === 1 && /out loud/.test(words[0]), JSON.stringify(words))
 
 // ------------------------------------------------------------------ no speech engine
+// It can still play the ElevenLabs voice: only the fallback is missing.
 const bare = await b.newPage()
 await asGuest(bare)
 await bare.evaluateOnNewDocument(() => {
@@ -174,7 +240,7 @@ await bare.evaluateOnNewDocument(() => {
 await bare.goto(LESSON, { waitUntil: 'domcontentloaded' })
 await bare.waitForSelector(toggle, { timeout: 20000 })
 const bareInfo = await bare.$eval(toggle, (x) => ({ disabled: x.disabled, title: x.title }))
-check('a browser that cannot speak disables the speaker and says why', bareInfo.disabled && /can't read aloud/.test(bareInfo.title), JSON.stringify(bareInfo))
+check('a browser with no speech engine of its own still offers the ElevenLabs voice', !bareInfo.disabled, JSON.stringify(bareInfo))
 await bare.close()
 
 // ------------------------------------------------------------------------- hygiene

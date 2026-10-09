@@ -54,6 +54,10 @@ services:
       # Comma-separated if there is more than one.
       - key: ALLOWED_ORIGINS
         sync: false
+      # The teacher's voice (server/tts.py). Leave it empty and every learner
+      # hears the browser's own voice instead.
+      - key: ELEVENLABS_API_KEY
+        sync: false
       # Render's proxy is in front, so rate limits must read the forwarded address
       # or every learner shares one bucket.
       - key: TRUST_PROXY

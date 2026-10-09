@@ -115,7 +115,7 @@ src/
     escalation.ts         pure: did the last hint land? (unchanged code -> climb)
     plain.ts              pure: takes the long dash out of teacher text
     spoken.ts             pure: teacher text as it is said aloud (code spans in words)
-    voice.ts              reads the teacher aloud (browser speechSynthesis), off by default
+    voice.ts              reads the teacher aloud: ElevenLabs, else speechSynthesis; off by default
     health.ts             /api/health -> degraded flag for the top bar
   auth/                 supabase.ts (client, null if unconfigured), session.ts (lifecycle,
                         sign-in/up, password reset), access.ts (who may see a page),
@@ -144,6 +144,7 @@ server/
   leakguard.py          answer-leak detection; instruction detection
   quota.py              per-caller rate limits; per-sitting interruption budget
   stt.py                POST /api/transcribe with its own limits
+  tts.py                POST /api/speak: ElevenLabs audio, its own limits, a replay cache
   errors.py             16-rule dictionary: Python error -> plain English
   cache.py              sha256(model + system + context) -> server/.cache/*.json
   auth.py               Supabase JWT verification (anonymous when unconfigured)
@@ -417,10 +418,14 @@ Notes:
   `/api/transcribe`; the words land in the ask box and are **never sent
   automatically**, because speech-to-text mangles code ("colon" is not "Colin").
 - **Read aloud.** `voice.ts` follows `speech` in the store and reads each one
-  once, when `streaming` goes false, with the browser's `speechSynthesis`, a
-  sentence per utterance (long ones get cut off in some browsers). A different
-  id, or none, cancels it; so do the mic starting and the speaker turning off.
-  Off by default (`teaching-ide:voice`). `spoken.ts` turns code spans into words.
+  once, when `streaming` goes false. It asks `/api/speak` for ElevenLabs audio
+  and plays it; any refusal, an error or 8 s without an answer, and the browser's
+  `speechSynthesis` reads it instead, a sentence per utterance (long ones get cut
+  off in some browsers). A refusal that will not change soon (no key, no
+  credits, refused, budget spent) skips the server for 10 minutes. A different
+  id, or none, cancels it, including audio still on its way (a generation
+  counter); so do the mic starting and the speaker turning off. Off by default
+  (`teaching-ide:voice`). `spoken.ts` turns code spans into words for both.
 - **Themes.** Light and dark, following the OS until a choice is made. Every
   colour is a CSS variable; the editor's syntax colours read the same ones, so
   switching never rebuilds the editor. `index.html` sets the theme before first
@@ -448,7 +453,8 @@ Notes:
 | Last hint given on each exercise (and the code it was given against) | `bridge.ts` | escalation |
 | Speech inside the editor | `speechField` (CodeMirror state) | decoration builder |
 | AST baseline, starter structure | `semantics.ts` | `classify()`, `hasStarted()` |
-| Rate-limit counters | server memory (`quota.py`, `stt.py`) | `/api/teach`, `/api/transcribe` |
+| Rate-limit counters | server memory (`quota.py`, `stt.py`, `tts.py`) | `/api/teach`, `/api/transcribe`, `/api/speak` |
+| Spoken audio, for replay | server memory (`tts.py`), 16 MB | `/api/speak` |
 | Response cache | `server/.cache/` on disk | `/api/teach` |
 
 Rule of thumb: high-frequency data (keystrokes, ticks, events) stays in module
@@ -466,6 +472,7 @@ state lives in Zustand.
 | `POST /api/teach` | The one streaming endpoint (SSE: `tool`, `delta`, `fallback`, `done`) |
 | `POST /api/translate-error` | Dictionary lookup, no model, no tokens, no gate |
 | `POST /api/transcribe` | Raw audio in, text out (voice questions) |
+| `POST /api/speak` | `{text}` in, ElevenLabs MP3 out; a refusal is a 503 naming its `kind` |
 | `POST /api/check-ladder` | Runs hand-written rungs through the leak and instruction guards |
 | `GET /api/health` | Model, key present, cache size, last provider outcome |
 
@@ -748,7 +755,8 @@ way a session row opens and recording starts.
 | Supabase unconfigured | `supabase === null` | Signed-out mode, nothing stored |
 | Progress cannot be read or saved | `data/progress.ts` | Visible notice with retry; no writes until a read succeeds |
 | Voice unavailable, blocked or empty | `stt.py`, `useVoice` | A plain message; typing still works |
-| No speech engine in the browser | `voiceSupported` | Speaker disabled, saying why; the bubble is unchanged |
+| ElevenLabs unconfigured, out of credits or refusing | `tts.py`, `voice.ts` | The browser's voice; both stop asking for 10 minutes |
+| `/api/speak` slow, down or limited | `voice.ts` | The browser's voice for that one |
 
 The invariant: **the lesson never stalls.** Every row above ends in speech from
 the ladder or silence with a recorded reason.
@@ -781,6 +789,9 @@ the ladder or silence with a recorded reason.
 | `LLM_CACHE` | `cache.py` | `1` |
 | `STT_MODEL` / `STT_LANGUAGE` | `llm.py` | `whisper-large-v3-turbo` / detect (`none` switches voice off) |
 | `STT_PER_MINUTE` / `STT_PER_DAY` / `STT_MAX_BYTES` | `stt.py` | 6 / 150 / 4 MB |
+| `ELEVENLABS_API_KEY` | `tts.py` | empty (the browser's voice only) |
+| `ELEVENLABS_VOICE_ID` / `ELEVENLABS_MODEL` / `ELEVENLABS_FORMAT` | `tts.py` | George (`JBFqnCBsd6RMkjVDRZzb`) / `eleven_flash_v2_5` / `mp3_44100_64` |
+| `TTS_PER_MINUTE` / `TTS_PER_DAY` / `TTS_CHARS_PER_DAY` / `TTS_PAUSE_S` / `TTS_CACHE_BYTES` | `tts.py` | 12 / 300 / 20,000 / 600 / 16 MB |
 | `TEACH_PER_MINUTE` / `TEACH_PER_DAY` / `TEACH_GATE_BUDGET` | `quota.py` | 10 / 400 / 8 |
 | `TRUST_PROXY` | `quota.py` | `0` |
 | `SUPABASE_URL` / `SUPABASE_JWT_SECRET` / `SUPABASE_JWT_AUDIENCE` | `auth.py` | empty / empty (both empty: anonymous) / `authenticated` |
@@ -843,6 +854,7 @@ the live-teacher suite).
 | teacher | unit (Python) | Prompt contents, memory, `explain`, sanitising, instruction guard, quotas |
 | api | unit (Python) | The HTTP surface with the model stubbed: limits, fallbacks, headers, cross-origin, single origin |
 | stt | unit (Python) | Voice limits, formats, provider errors (stubbed) |
+| tts | unit (Python) | The ElevenLabs voice: limits, the replay cache, the daily budget, each refusal named, the pause (stubbed) |
 | phase1 | browser | Editor and execution, Stop, restart |
 | phase2 | browser | The observer live, the dev panel |
 | phase3 | browser | Lesson content and the ladder |
@@ -851,7 +863,7 @@ the live-teacher suite).
 | accounts | browser | Sign-in, saved progress, memory, reset on sign-out, against a fake Supabase |
 | pages | browser | Redirects and the guard, guest, sign-in/up (confirmation on and off), password reset, the course page and Continue, coming back to the lesson, no-Supabase mode |
 | voice | browser | The mic with a fake microphone and a stubbed server |
-| speaker | browser | Reading aloud with a fake speech engine: off by default, once per answer, stops when dismissed |
+| speaker | browser | Reading aloud with a fake speech engine and audio: off by default, ElevenLabs first and the browser voice when it cannot, once per answer, stops when dismissed, late audio dropped |
 
 Techniques worth knowing:
 
